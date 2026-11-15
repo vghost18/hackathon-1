@@ -12,7 +12,18 @@ from idp_assistant.exporters import all_exports
 from idp_assistant.outlook_draft import open_draft,OutlookDraftError
 
 def _init():
-    st.session_state.setdefault("view","Chat"); st.session_state.setdefault("messages",[]); st.session_state.setdefault("document_id",None); st.session_state.setdefault("batch_document_ids",[])
+    st.session_state.setdefault("view","Chat"); st.session_state.setdefault("messages",[]); st.session_state.setdefault("document_id",None); st.session_state.setdefault("batch_document_ids",[]); st.session_state.setdefault("reset_nonce",0)
+
+def _reset_session():
+    """Clear transient conversation state while keeping stored documents intact."""
+    for key in list(st.session_state):
+        if key.startswith(("json_", "table_", "format_", "active_document_")):
+            del st.session_state[key]
+    st.session_state.messages=[]
+    st.session_state.document_id=None
+    st.session_state.batch_document_ids=[]
+    st.session_state.view="Chat"
+    st.session_state.reset_nonce=st.session_state.get("reset_nonce",0)+1
 
 def _style():
     st.markdown("""<style>
@@ -31,6 +42,9 @@ def _sidebar(settings):
         st.caption("Document intelligence, in one conversation.")
         if st.button("＋ New conversation",use_container_width=True):
             st.session_state.messages=[]; st.session_state.document_id=None; st.session_state.view="Chat"; st.rerun()
+        if st.button("↺ Reset session",use_container_width=True,help="Clear the current document, chat, extraction tables, and selections. Stored documents remain in the library."):
+            _reset_session()
+            st.rerun()
         st.divider()
         if st.button("💬 Chat",use_container_width=True): st.session_state.view="Chat"; st.rerun()
         if st.button("▣ Document library",use_container_width=True): st.session_state.view="Library"; st.rerun()
@@ -42,8 +56,12 @@ def _document_picker(db):
     docs=list_documents(db)
     if not docs: return None
     options={f"{d['filename']}  ·  {d['page_count']} pages  ·  {d['processing_status']}":d["id"] for d in docs}
-    current=next((i for i,x in enumerate(options.values()) if x==st.session_state.document_id),0)
-    label=st.selectbox("Active document",list(options),index=current)
+    labels=["— No active document —",*options]
+    current=next((i+1 for i,x in enumerate(options.values()) if x==st.session_state.document_id),0)
+    label=st.selectbox("Active document",labels,index=current,key=f"active_document_{st.session_state.reset_nonce}")
+    if label==labels[0]:
+        st.session_state.document_id=None
+        return None
     st.session_state.document_id=options[label]
     return get_document(db,options[label])
 
@@ -192,7 +210,7 @@ def _chat(settings,db):
     _analysis(settings,db,doc)
     for message in st.session_state.messages:
         with st.chat_message(message["role"]): st.markdown(message["content"])
-    prompt=st.chat_input("Ask about your document…")
+    prompt=st.chat_input("Ask anything about your document…")
     if prompt:
         st.session_state.messages.append({"role":"user","content":prompt})
         if not doc: reply="Attach or select a PDF first."
