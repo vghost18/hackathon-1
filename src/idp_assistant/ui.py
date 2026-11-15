@@ -19,7 +19,7 @@ def _style():
     .stApp {background:linear-gradient(135deg,#010101,#0E287C)}
     [data-testid="stSidebar"] {background:#101827}
     [data-testid="stSidebar"] * {color:#f8fafc}
-    .hero {padding:1.4rem 0 .5rem}.hero h1{margin:0;color:#111827}.hero p{color:#64748b;font-size:1.05rem}
+    .hero {padding:1.4rem 0 .5rem}.hero h1{margin:0;color:#E0E3EB}.hero p{color:#B8BCC2;font-size:1.05rem}
     .doc-chip{padding:.6rem .8rem;border-radius:10px;background:#e0e7ff;color:#3730a3;font-weight:600}
     .stButton>button {border-radius:9px;border:0;background:#4f46e5;color:white;font-weight:600}
     [data-testid="stChatMessage"] {border-radius:14px}
