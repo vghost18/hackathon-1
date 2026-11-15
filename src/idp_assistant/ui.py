@@ -5,14 +5,14 @@ import io
 import zipfile
 import pandas as pd
 import streamlit as st
-from idp_assistant.storage import ingest_pdf,list_documents,get_document,extraction,save_correction,log_plugin,DocumentError
+from idp_assistant.storage import ingest_document,list_documents,get_document,extraction,save_correction,log_plugin,DocumentError
 from idp_assistant.processing import process_document
 from idp_assistant.intelligence import answer,IntelligenceError
 from idp_assistant.exporters import all_exports
 from idp_assistant.outlook_draft import open_draft,OutlookDraftError
 
 def _init():
-    st.session_state.setdefault("view","Chat"); st.session_state.setdefault("messages",[]); st.session_state.setdefault("document_id",None)
+    st.session_state.setdefault("view","Chat"); st.session_state.setdefault("messages",[]); st.session_state.setdefault("document_id",None); st.session_state.setdefault("batch_document_ids",[])
 
 def _style():
     st.markdown("""<style>
@@ -48,13 +48,19 @@ def _document_picker(db):
     return get_document(db,options[label])
 
 def _upload(settings,db):
-    with st.expander("Attach a PDF",expanded=not st.session_state.document_id):
-        file=st.file_uploader("PDF document",type="pdf",label_visibility="collapsed")
-        if file and st.button("Add to conversation",type="primary"):
+    with st.expander("Attach documents",expanded=not st.session_state.document_id):
+        files=st.file_uploader("Up to 3 PDFs, images, or DOCX files",type=["pdf","png","jpg","jpeg","docx"],accept_multiple_files=True,label_visibility="collapsed")
+        if files and st.button("Add documents to conversation",type="primary"):
+            if len(files)>3:
+                st.error("Choose no more than 3 documents at once."); return
+            added=[]
             try:
-                doc,duplicate=ingest_pdf(db,settings.data_dir,file.name,file.getvalue())
-                st.session_state.document_id=doc["id"]
-                st.session_state.messages.append({"role":"assistant","content":("I found this document in your library and attached it." if duplicate else f"I attached **{doc['filename']}**. Ask me about it, or choose Analyze document.")})
+                for file in files:
+                    doc,duplicate=ingest_document(db,settings.data_dir,file.name,file.getvalue())
+                    added.append((doc,duplicate))
+                st.session_state.document_id=added[0][0]["id"]; st.session_state.batch_document_ids=[doc["id"] for doc,_ in added]
+                names=", ".join(f"**{doc['filename']}**" for doc,_ in added)
+                st.session_state.messages.append({"role":"assistant","content":f"I attached {names}. You can analyze this batch together or select one as the active document."})
                 st.rerun()
             except DocumentError as exc: st.error(str(exc))
 
@@ -69,6 +75,17 @@ def _analysis(settings,db,doc):
                 st.session_state.messages.append({"role":"assistant","content":f"Analysis complete. I identified this as **{result.get('document_type','Other')}**. {result.get('summary','')}"})
                 st.rerun()
             except IntelligenceError as exc: st.error(str(exc))
+    batch_ids=st.session_state.batch_document_ids
+    if len(batch_ids)>1 and st.button(f"Analyze all {len(batch_ids)} uploaded documents",disabled=not settings.gemini_configured):
+        failures=[]
+        progress=st.progress(0)
+        for index,document_id in enumerate(batch_ids):
+            try: process_document(settings,db,get_document(db,document_id))
+            except IntelligenceError as exc: failures.append(str(exc))
+            progress.progress((index+1)/len(batch_ids))
+        if failures: st.error("Some documents could not be analyzed: "+"; ".join(failures))
+        else: st.success(f"Analyzed {len(batch_ids)} documents.")
+        st.rerun()
     if not settings.gemini_configured: st.caption("Add GEMINI_API_KEY in .env, then restart the app to enable analysis.")
 
 def _workspace(settings,db,doc):

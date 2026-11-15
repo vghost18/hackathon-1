@@ -1,30 +1,59 @@
 """Safe local PDF storage and SQLite data access."""
 from __future__ import annotations
 import hashlib, json
+import io
 from pathlib import Path
 from typing import Any
 import fitz
+from docx import Document as WordDocument
+from PIL import Image
 from idp_assistant.db import get_connection
 class DocumentError(ValueError): pass
-def ingest_pdf(database_path: Path, data_dir: Path, filename: str, content: bytes) -> tuple[dict[str, Any], bool]:
-    if not content or not filename.lower().endswith(".pdf"): raise DocumentError("Please provide a non-empty PDF file.")
+SUPPORTED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".docx"}
+
+def _document_pages(filename: str, content: bytes) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    extension = Path(filename).suffix.lower()
+    if extension == ".pdf":
+        pdf=fitz.open(stream=content,filetype="pdf")
+        pages=[{"number":i+1,"text":page.get_text("text"),"image":page.get_pixmap(matrix=fitz.Matrix(1.5,1.5),alpha=False).tobytes("png")} for i,page in enumerate(pdf)]
+        metadata=dict(pdf.metadata or {}); metadata["input_type"]="pdf"; pdf.close(); return pages,metadata
+    if extension == ".docx":
+        word=WordDocument(io.BytesIO(content))
+        chunks=[paragraph.text for paragraph in word.paragraphs if paragraph.text.strip()]
+        for table in word.tables:
+            chunks.extend(" | ".join(cell.text for cell in row.cells) for row in table.rows)
+        return [{"number":1,"text":"\n".join(chunks),"image":None}],{"input_type":"docx"}
+    if extension in {".png",".jpg",".jpeg"}:
+        image=Image.open(io.BytesIO(content)); image.verify()
+        return [{"number":1,"text":"","image":content}],{"input_type":"image","image_format":extension.lstrip(".")}
+    raise DocumentError("Supported file types are PDF, PNG, JPG, JPEG, and DOCX.")
+
+def ingest_document(database_path: Path, data_dir: Path, filename: str, content: bytes) -> tuple[dict[str, Any], bool]:
+    if not content or Path(filename).suffix.lower() not in SUPPORTED_EXTENSIONS: raise DocumentError("Supported file types are PDF, PNG, JPG, JPEG, and DOCX.")
     try:
-        pdf=fitz.open(stream=content,filetype="pdf"); pages=[{"number":i+1,"text":p.get_text("text")} for i,p in enumerate(pdf)]
-        metadata=dict(pdf.metadata or {}); page_count=pdf.page_count; pdf.close()
+        pages,metadata=_document_pages(filename,content); page_count=len(pages)
     except Exception as exc: raise DocumentError(f"Invalid or unreadable PDF: {exc}") from exc
     digest=hashlib.sha256(content).hexdigest(); target_dir=data_dir/"documents"; target_dir.mkdir(parents=True,exist_ok=True)
     with get_connection(database_path) as conn:
         existing=conn.execute("SELECT * FROM documents WHERE file_hash=?",(digest,)).fetchone()
         if existing: return dict(existing),True
-        target=target_dir/f"{digest}.pdf"; target.write_bytes(content)
+        target=target_dir/f"{digest}{Path(filename).suffix.lower()}"; target.write_bytes(content)
         cur=conn.execute("INSERT INTO documents(file_hash,filename,storage_path,metadata_json,page_count,processing_status) VALUES(?,?,?,?,?,'stored')",(digest,filename,str(target),json.dumps(metadata),page_count))
         doc_id=cur.lastrowid; conn.executemany("INSERT INTO document_pages(document_id,page_number,native_text,processing_status,review_required) VALUES(?,?,?,'native_text',?)",[(doc_id,p["number"],p["text"],int(not p["text"].strip())) for p in pages]); conn.commit()
         return get_document(database_path,doc_id),False
+
+def ingest_pdf(database_path: Path, data_dir: Path, filename: str, content: bytes) -> tuple[dict[str, Any], bool]:
+    return ingest_document(database_path, data_dir, filename, content)
 def get_document(database_path:Path,document_id:int)->dict[str,Any]:
     with get_connection(database_path) as conn:
         row=conn.execute("SELECT * FROM documents WHERE id=?",(document_id,)).fetchone()
         if not row: raise DocumentError("Document no longer exists.")
         data=dict(row); data["metadata"]=json.loads(data.pop("metadata_json") or "{}"); data["pages"]=[dict(p) for p in conn.execute("SELECT * FROM document_pages WHERE document_id=? ORDER BY page_number",(document_id,))]; return data
+def load_processing_pages(document: dict[str, Any]) -> list[dict[str, Any]]:
+    """Recreate text and visual page inputs from the stored source file."""
+    source=Path(document["storage_path"])
+    pages,_=_document_pages(document["filename"],source.read_bytes())
+    return pages
 def list_documents(database_path:Path)->list[dict[str,Any]]:
     with get_connection(database_path) as conn: return [dict(r) for r in conn.execute("SELECT id,filename,page_count,document_type,processing_status,summary,created_at FROM documents ORDER BY id DESC")]
 def save_processing(database_path:Path,document_id:int,document_type:str,summary:str,value:dict[str,Any],status:str,pages:list[dict[str,Any]])->None:
