@@ -14,6 +14,23 @@ def _fields(value:dict[str,Any])->dict[str,Any]:
             for index, item in enumerate(raw) if isinstance(item, dict)
         }
     return {}
+def _flatten(prefix:str,value:Any)->dict[str,Any]:
+    if isinstance(value,dict):
+        result={}
+        for key,item in value.items(): result.update(_flatten(f"{prefix}.{key}" if prefix else str(key),item))
+        return result
+    if isinstance(value,list):
+        result={}
+        for index,item in enumerate(value): result.update(_flatten(f"{prefix}.{index}",item))
+        return result
+    return {prefix:value}
+def _export_fields(value:dict[str,Any])->dict[str,Any]:
+    result=_fields(value)
+    sections=value.get("sections",{})
+    if isinstance(sections,dict):
+        for section,content in sections.items():
+            result.update(_flatten(str(section),content))
+    return result
 def _tables(value:dict[str,Any])->list[dict[str,Any]]:
     normalized=[]
     for index, table in enumerate(value.get("tables",[]) if isinstance(value.get("tables",[]),list) else []):
@@ -26,20 +43,29 @@ def _tables(value:dict[str,Any])->list[dict[str,Any]]:
     return normalized
 def as_json(value): return json.dumps(value,indent=2,ensure_ascii=False).encode()
 def as_csv(value):
-    out=io.StringIO(); pd.DataFrame([_fields(value)]).to_csv(out,index=False)
+    out=io.StringIO(); pd.DataFrame([_export_fields(value)]).to_csv(out,index=False)
     for table in _tables(value):
         out.write("\n"+table.get("name","Table")+"\n"); pd.DataFrame(table.get("rows",[]),columns=table.get("columns") or None).to_csv(out,index=False)
     return out.getvalue().encode()
 def as_excel(value):
     out=io.BytesIO()
     with pd.ExcelWriter(out,engine="openpyxl") as writer:
-        pd.DataFrame([_fields(value)]).T.rename(columns={0:"Value"}).to_excel(writer,sheet_name="Details")
+        pd.DataFrame([_export_fields(value)]).T.rename(columns={0:"Value"}).to_excel(writer,sheet_name="Details")
         for i,t in enumerate(_tables(value),1): pd.DataFrame(t.get("rows",[]),columns=t.get("columns") or None).to_excel(writer,sheet_name=(t.get("name") or f"Table {i}")[:31],index=False)
     return out.getvalue()
 def as_word(value):
     doc=Document(); doc.add_heading(value.get("document_type","Document"),0); doc.add_paragraph(value.get("summary",""))
     doc.add_heading("Details",1)
-    for key,item in _fields(value).items(): doc.add_paragraph(f"{key}: {item}")
+    for key,item in _export_fields(value).items(): doc.add_paragraph(f"{key}: {item}")
+    sections=value.get("sections",{})
+    if isinstance(sections,dict):
+        for section,content in sections.items():
+            doc.add_heading(str(section).replace("_"," ").title(),1)
+            if isinstance(content,list):
+                for item in content: doc.add_paragraph(json.dumps(item,ensure_ascii=False),style="List Bullet")
+            elif isinstance(content,dict):
+                for key,item in content.items(): doc.add_paragraph(f"{key}: {item}")
+            else: doc.add_paragraph(str(content))
     for table in _tables(value):
         doc.add_heading(table.get("name","Table"),1); rows=table.get("rows",[]); columns=table.get("columns") or (list(rows[0]) if rows else [])
         grid=doc.add_table(rows=1,cols=len(columns)); grid.style="Light Shading Accent 1"

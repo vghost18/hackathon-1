@@ -92,6 +92,56 @@ def _workspace(settings,db,doc):
     if not doc: return
     value=extraction(db,doc["id"])
     if not value: return
+    st.subheader("Structured extraction")
+    sections=value.get("sections",{})
+    if isinstance(sections,dict) and sections:
+        section_tabs=st.tabs([str(name).replace("_"," ").title() for name in sections])
+        for tab,(name,content) in zip(section_tabs,sections.items()):
+            with tab:
+                if isinstance(content,list):
+                    rows=[]
+                    for item in content:
+                        rows.append(item if isinstance(item,dict) else {"Value":item})
+                    st.dataframe(pd.DataFrame(rows),use_container_width=True,hide_index=True)
+                elif isinstance(content,dict):
+                    st.dataframe(pd.DataFrame([{"Key":key,"Value":item} for key,item in content.items()]),use_container_width=True,hide_index=True)
+                else:
+                    st.write(content)
+    fields=value.get("fields",{})
+    if isinstance(fields,dict):
+        field_rows=[
+            {
+                "Field":key,
+                "Value":item.get("value",item) if isinstance(item,dict) else item,
+                "Source page":item.get("source_page","") if isinstance(item,dict) else "",
+                "Confidence":item.get("confidence","") if isinstance(item,dict) else "",
+                "Status":item.get("verification_status","") if isinstance(item,dict) else "",
+            }
+            for key,item in fields.items()
+        ]
+    else:
+        field_rows=[
+            {
+                "Field":item.get("field_name",item.get("name","")),
+                "Value":item.get("value",""),
+                "Source page":item.get("source_page",""),
+                "Confidence":item.get("confidence",""),
+                "Status":item.get("verification_status",""),
+            }
+            for item in fields if isinstance(item,dict)
+        ]
+    if field_rows:
+        st.dataframe(pd.DataFrame(field_rows),use_container_width=True,hide_index=True)
+    tables=value.get("tables",[])
+    for table_index,table in enumerate(tables if isinstance(tables,list) else []):
+        if not isinstance(table,dict):
+            continue
+        columns=table.get("columns") or table.get("headers") or []
+        rows=table.get("rows") or []
+        if rows and isinstance(rows[0],list):
+            rows=[dict(zip(columns,row)) for row in rows]
+        st.markdown(f"**{table.get('name') or table.get('table_name') or f'Table {table_index+1}'}**")
+        st.dataframe(pd.DataFrame(rows,columns=columns or None),use_container_width=True,hide_index=True)
     with st.expander("Review and correct extraction"):
         text=st.text_area("Corrected JSON",json.dumps(value,indent=2),height=320,key=f"json_{doc['id']}")
         if st.button("Save corrections"):

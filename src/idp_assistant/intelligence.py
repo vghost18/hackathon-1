@@ -13,7 +13,17 @@ def _ask(settings:Settings,prompt:str)->str:
     except Exception as exc: raise IntelligenceError(f"Gemini request failed: {exc}") from exc
 def analyse(settings:Settings,pages:list[dict[str,Any]])->dict[str,Any]:
     text="\n\n".join(f"[PAGE {p['number']}]\n{p.get('text','')}" for p in pages)
-    prompt=f"Analyze this document. Use supplied page images to read scanned content. Return a JSON object with document_type, summary, fields, tables, warnings. Document types: Resume, Invoice, Receipt, Travel Receipt, Expense Document, Bank Statement, Purchase Order, Contract, Business Report, Other. Field entries must include value, source_page, source_text, confidence null, verification_status. Do not invent values. SOURCE:\n{text[:180000]}"
+    prompt=f"""Analyze this document. Use supplied page images to read scanned content.
+Return JSON with document_type, summary, fields, sections, tables, warnings.
+For every document, preserve all meaningful fields with value, source_page,
+source_text, confidence null, and verification_status.
+If document_type is Resume, sections MUST include these keys even when empty:
+personal_information, professional_summary, experience, projects, education,
+certifications, skills, awards, languages, publications.
+Represent experience, projects, education, certifications, awards, languages,
+and publications as arrays of complete objects. Never silently omit a section
+and never invent missing values. SOURCE:
+{text[:180000]}"""
     client=genai.Client(api_key=settings.gemini_api_key)
     parts=[prompt]
     for page in pages:

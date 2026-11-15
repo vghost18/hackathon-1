@@ -13,6 +13,7 @@
 - Local Streamlit application smoke test
 - PDF validation, SHA-256 deduplication, durable storage, and page-level native-text coverage
 - Optional Gemini interpretation boundary and grounded Q&A
+- LangChain prompt/orchestration dependencies and a LangGraph document-processing workflow (prepare → analyze → persist/error)
 - Corrected extraction persistence, CSV/Excel/Word/JSON/ZIP export engine
 - Allowlisted plugin registry, controlled JSON publishing, and Microsoft Graph Outlook integration
 

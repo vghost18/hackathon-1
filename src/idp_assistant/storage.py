@@ -59,7 +59,7 @@ def list_documents(database_path:Path)->list[dict[str,Any]]:
 def save_processing(database_path:Path,document_id:int,document_type:str,summary:str,value:dict[str,Any],status:str,pages:list[dict[str,Any]])->None:
     payload=json.dumps(value)
     with get_connection(database_path) as conn:
-        conn.execute("UPDATE documents SET document_type=?,summary=?,original_extraction_json=?,corrected_extraction_json=COALESCE(corrected_extraction_json,?),processing_status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",(document_type,summary,payload,payload,status,document_id))
+        conn.execute("UPDATE documents SET document_type=?,summary=?,original_extraction_json=?,corrected_extraction_json=CASE WHEN corrected_extraction_json IS NULL OR corrected_extraction_json=original_extraction_json THEN ? ELSE corrected_extraction_json END,processing_status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",(document_type,summary,payload,payload,status,document_id))
         conn.executemany("UPDATE document_pages SET processing_status=?,review_required=?,error_message=? WHERE document_id=? AND page_number=?",[(p["status"],int(p["review_required"]),p.get("error"),document_id,p["page_number"]) for p in pages]); conn.commit()
 def extraction(database_path:Path,document_id:int,corrected:bool=True)->dict[str,Any]:
     with get_connection(database_path) as conn: row=conn.execute("SELECT original_extraction_json,corrected_extraction_json FROM documents WHERE id=?",(document_id,)).fetchone()
