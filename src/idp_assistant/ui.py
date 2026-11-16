@@ -263,8 +263,7 @@ def _workspace(settings,db,doc):
             with action_left:
                 st.download_button(f"Download {selected_format}",selected_data,file_name=selected_name,use_container_width=True,key=f"download_{doc['id']}_{selected_format.lower()}")
             with action_right:
-                if st.button(f"Send via Outlook",use_container_width=True,key=f"outlook_{doc['id']}_{selected_format.lower()}"):
-                    webbrowser.open("https://outlook.office.com/mail/")
+                if st.link_button("Send via Outlook",url="https://outlook.office.com/mail/",width="stretch",key=f"outlook_{doc['id']}_{selected_format.lower()}"):
                     log_plugin(db,doc["id"],"outlook_web_open","success",{"format":selected_format})
                     st.rerun()
 
