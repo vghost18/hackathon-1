@@ -92,25 +92,26 @@ def _upload(settings,db):
 def _analysis(settings,db,doc):
     if not doc: return
     left,right=st.columns([3,1])
-    with left: st.markdown(f"<div class='doc-chip'>📄 {doc['filename']} · {doc['page_count']} pages · {doc['processing_status']}</div>",unsafe_allow_html=True)
+    doc_type=doc.get("document_type") or "Type not identified yet"
+    with left: st.markdown(f"<div class='doc-chip'>📄 {doc['filename']} · {doc['page_count']} pages · {doc['processing_status']} · <b>{doc_type}</b></div>",unsafe_allow_html=True)
     with right:
-        if st.button("Analyze document",disabled=not settings.gemini_configured,use_container_width=True):
+        batch_ids=st.session_state.batch_document_ids
+        analyze_label=f"Analyze all {len(batch_ids)} documents" if len(batch_ids)>1 else "Analyze document"
+        if st.button(analyze_label,disabled=not settings.gemini_configured,use_container_width=True):
+            ids=batch_ids if len(batch_ids)>1 else [doc["id"]]
+            failures=[]
             try:
-                with st.spinner("Reading pages, checking coverage, and extracting data..."): result=process_document(settings,db,doc)
-                st.session_state.messages.append({"role":"assistant","content":f"Analysis complete. I identified this as **{result.get('document_type','Other')}**. {result.get('summary','')}"})
+                with st.spinner(f"Reading and extracting {len(ids)} document{'s' if len(ids)>1 else ''}..."):
+                    results=[]
+                    for document_id in ids:
+                        try: results.append((get_document(db,document_id),process_document(settings,db,get_document(db,document_id))))
+                        except IntelligenceError as exc: failures.append(str(exc))
+                if results:
+                    names=", ".join(f"**{item[0]['filename']}** ({item[1].get('document_type','Other')})" for item in results)
+                    st.session_state.messages.append({"role":"assistant","content":f"Analysis complete for {names}. Each document is shown in its own output tab below."})
+                if failures: st.error("Some documents could not be analyzed: "+"; ".join(failures))
                 st.rerun()
             except IntelligenceError as exc: st.error(str(exc))
-    batch_ids=st.session_state.batch_document_ids
-    if len(batch_ids)>1 and st.button(f"Analyze all {len(batch_ids)} uploaded documents",disabled=not settings.gemini_configured):
-        failures=[]
-        progress=st.progress(0)
-        for index,document_id in enumerate(batch_ids):
-            try: process_document(settings,db,get_document(db,document_id))
-            except IntelligenceError as exc: failures.append(str(exc))
-            progress.progress((index+1)/len(batch_ids))
-        if failures: st.error("Some documents could not be analyzed: "+"; ".join(failures))
-        else: st.success(f"Analyzed {len(batch_ids)} documents.")
-        st.rerun()
     if not settings.gemini_configured: st.caption("Add GEMINI_API_KEY in .env, then restart the app to enable analysis.")
 
 def _workspace(settings,db,doc):
@@ -165,7 +166,7 @@ def _workspace(settings,db,doc):
         st.dataframe(pd.DataFrame(rows,columns=columns or None),use_container_width=True,hide_index=True)
     with st.expander("Review and correct extraction"):
         text=st.text_area("Corrected JSON",json.dumps(value,indent=2),height=320,key=f"json_{doc['id']}")
-        if st.button("Save corrections"):
+        if st.button("Save corrections",key=f"save_corrections_{doc['id']}"):
             try: save_correction(db,doc["id"],json.loads(text)); st.success("Corrections saved.")
             except json.JSONDecodeError as exc: st.error(f"Invalid JSON: {exc}")
         for table in value.get("tables",[]):
@@ -195,9 +196,9 @@ def _workspace(settings,db,doc):
                 st.dataframe(pd.DataFrame({"Files in ZIP":archive.namelist()}),use_container_width=True,hide_index=True)
         action_left,action_right=st.columns(2)
         with action_left:
-            st.download_button(f"Download {selected_format}",selected_data,file_name=selected_name,use_container_width=True)
+            st.download_button(f"Download {selected_format}",selected_data,file_name=selected_name,use_container_width=True,key=f"download_{doc['id']}_{selected_format.lower()}")
         with action_right:
-            if st.button(f"Open {selected_format} draft in Outlook",use_container_width=True):
+            if st.button(f"Open {selected_format} draft in Outlook",use_container_width=True,key=f"outlook_{doc['id']}_{selected_format.lower()}"):
                 try:
                     open_draft(settings.data_dir,selected_name,selected_data,doc["filename"])
                     log_plugin(db,doc["id"],"outlook_draft","success",{"format":selected_format})
@@ -222,7 +223,21 @@ def _chat(settings,db):
             try: reply=answer(settings,[{"number":p["page_number"],"text":p["native_text"] or ""} for p in doc["pages"]],prompt)
             except IntelligenceError as exc: reply=str(exc)
         st.session_state.messages.append({"role":"assistant","content":reply}); st.rerun()
-    _workspace(settings,db,doc)
+    batch_ids=st.session_state.batch_document_ids
+    if len(batch_ids)>1:
+        st.subheader("Document outputs")
+        tabs=st.tabs([f"{get_document(db,document_id)['filename']} · {get_document(db,document_id).get('document_type') or 'Type pending'}" for document_id in batch_ids])
+        for tab,document_id in zip(tabs,batch_ids):
+            with tab:
+                batch_doc=get_document(db,document_id)
+                st.markdown(f"#### {batch_doc['filename']}")
+                st.caption(f"Identified type: **{batch_doc.get('document_type') or 'Not identified yet'}** · {batch_doc['page_count']} pages · {batch_doc['processing_status']}")
+                if batch_doc.get("processing_status") in ("complete","partial") and extraction(db,document_id):
+                    _workspace(settings,db,batch_doc)
+                else:
+                    st.info("Analyze this batch to display this document's extraction.")
+    else:
+        _workspace(settings,db,doc)
 
 def _library(db):
     st.markdown("<div class='hero'><h1>Document library</h1><p>Your stored files and their processing metadata.</p></div>",unsafe_allow_html=True)
