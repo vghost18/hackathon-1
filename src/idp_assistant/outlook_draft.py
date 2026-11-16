@@ -2,11 +2,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-import os
 import platform
-import subprocess
 import sys
-import tempfile
 
 
 class OutlookDraftError(RuntimeError):
@@ -61,22 +58,9 @@ def open_draft(
                 f"Current interpreter: {sys.executable}. Underlying error: {exc}"
             ) from exc
 
-    # Non-Windows fallback: open default mail client with subject/body and local file path in body.
-    try:
-        import urllib.parse
-        body_with_hint = body + f"\n\nAttachment file path:\n{attachment_path.resolve()}"
-        mailto_url = (
-            "mailto:"
-            f"?subject={urllib.parse.quote(subject)}"
-            f"&body={urllib.parse.quote(body_with_hint)}"
-        )
-        if platform.system().lower() == "darwin":
-            subprocess.run(["open", mailto_url], check=True)
-        else:
-            subprocess.run(["xdg-open", mailto_url], check=True)
-    except Exception as exc:
-        raise OutlookDraftError(
-            "Outlook COM attachment flow is Windows-only. On this OS, a mail draft can be opened without auto-attachment. "
-            f"Attachment has been saved at: {attachment_path.resolve()}. "
-            f"Open it manually and attach it in your mail client. Underlying error: {exc}"
-        ) from exc
+    raise OutlookDraftError(
+        "Outlook auto-attach is supported only with Windows desktop Outlook via COM. "
+        f"Current OS: {platform.system()}. "
+        f"Current interpreter: {sys.executable}. "
+        "Run this app on a Windows machine with Outlook installed and configured."
+    )
