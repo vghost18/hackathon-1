@@ -173,7 +173,8 @@ def _workspace(settings,db,doc):
             st.write(table.get("name","Table")); st.data_editor(table.get("rows",[]),num_rows="dynamic",key=f"table_{doc['id']}_{table.get('name','table')}")
     with st.expander("Export or send"):
         editable_value=json.loads(json.dumps(value))
-        st.caption("Edit the export preview (fields/tables), then save. Downloads and Outlook will use the saved version.")
+        st.caption("Edit the export preview (fields/tables). Save & Export appears only after edits are detected.")
+        original_export_snapshot=json.dumps(value,sort_keys=True,default=str)
         editable_fields=editable_value.get("fields",{})
         if isinstance(editable_fields,dict) and editable_fields:
             fields_df=pd.DataFrame([
@@ -211,10 +212,8 @@ def _workspace(settings,db,doc):
             editable_tables.append(updated_table)
         if editable_tables:
             editable_value["tables"]=editable_tables
-        if st.button("Save export edits",key=f"save_export_edits_{doc['id']}"):
-            save_correction(db,doc["id"],editable_value)
-            st.success("Export edits saved. New exports will use your updated data.")
-            st.rerun()
+        edited_export_snapshot=json.dumps(editable_value,sort_keys=True,default=str)
+        export_edits_detected=edited_export_snapshot!=original_export_snapshot
         latest_value=extraction(db,doc["id"])
         files=all_exports(latest_value)
         formats={"JSON":"extraction.json","CSV":"extraction.csv","Excel":"extraction.xlsx","Word":"extraction.docx","ZIP":"all_exports.zip"}
@@ -239,17 +238,26 @@ def _workspace(settings,db,doc):
             with zipfile.ZipFile(io.BytesIO(selected_data)) as archive:
                 st.dataframe(pd.DataFrame({"Files in ZIP":archive.namelist()}),use_container_width=True,hide_index=True)
         action_left,action_right=st.columns(2)
-        with action_left:
-            st.download_button(f"Download {selected_format}",selected_data,file_name=selected_name,use_container_width=True,key=f"download_{doc['id']}_{selected_format.lower()}")
-        with action_right:
-            if st.button(f"Open {selected_format} draft in Outlook",use_container_width=True,key=f"outlook_{doc['id']}_{selected_format.lower()}"):
-                try:
-                    open_draft(settings.data_dir,selected_name,selected_data,doc["filename"])
-                    log_plugin(db,doc["id"],"outlook_draft","success",{"format":selected_format})
-                    st.success("Outlook opened a draft with the selected export attached. Review recipients, then send it yourself.")
-                except OutlookDraftError as exc:
-                    log_plugin(db,doc["id"],"outlook_draft","failed",{"format":selected_format},error=str(exc))
-                    st.error(str(exc))
+        if export_edits_detected:
+            with action_left:
+                if st.button("Save and export edits",use_container_width=True,key=f"save_export_edits_{doc['id']}"):
+                    save_correction(db,doc["id"],editable_value)
+                    st.success("Export edits saved. Download and Outlook actions are now enabled with updated data.")
+                    st.rerun()
+            with action_right:
+                st.info("Save changes to enable Download and Outlook actions.")
+        else:
+            with action_left:
+                st.download_button(f"Download {selected_format}",selected_data,file_name=selected_name,use_container_width=True,key=f"download_{doc['id']}_{selected_format.lower()}")
+            with action_right:
+                if st.button(f"Open {selected_format} draft in Outlook",use_container_width=True,key=f"outlook_{doc['id']}_{selected_format.lower()}"):
+                    try:
+                        open_draft(settings.data_dir,selected_name,selected_data,doc["filename"])
+                        log_plugin(db,doc["id"],"outlook_draft","success",{"format":selected_format})
+                        st.success("Outlook opened a draft with the selected export attached. Review recipients, then send it yourself.")
+                    except OutlookDraftError as exc:
+                        log_plugin(db,doc["id"],"outlook_draft","failed",{"format":selected_format},error=str(exc))
+                        st.error(str(exc))
 
 def _chat(settings,db):
     st.markdown("<div class='hero'><h1>Your document conversation</h1><p>Attach a PDF, analyze it, correct its data, export it, or simply ask a question.</p></div>",unsafe_allow_html=True)
