@@ -84,6 +84,9 @@ def _upload(settings,db):
                     added.append((doc,duplicate))
                 st.session_state.session_document_ids.extend(doc["id"] for doc,_ in added if doc["id"] not in st.session_state.session_document_ids)
                 st.session_state.document_id=added[0][0]["id"]; st.session_state.batch_document_ids=[doc["id"] for doc,_ in added]
+                st.session_state.setdefault("export_dirty_docs",{})
+                for doc,_ in added:
+                    st.session_state.export_dirty_docs[str(doc["id"])]=False
                 names=", ".join(f"**{doc['filename']}**" for doc,_ in added)
                 st.session_state.messages.append({"role":"assistant","content":f"I attached {names}. You can analyze this batch together or select one as the active document."})
                 st.rerun()
@@ -173,6 +176,8 @@ def _workspace(settings,db,doc):
             st.write(table.get("name","Table")); st.data_editor(table.get("rows",[]),num_rows="dynamic",key=f"table_{doc['id']}_{table.get('name','table')}")
     with st.expander("Export or send"):
         editable_value=json.loads(json.dumps(value))
+        st.session_state.setdefault("export_dirty_docs",{})
+        doc_key=str(doc["id"])
         st.caption("Edit the export preview (fields/tables). Save & Export appears only after edits are detected.")
         original_export_snapshot=json.dumps(value,sort_keys=True,default=str)
         editable_fields=editable_value.get("fields",{})
@@ -201,7 +206,6 @@ def _workspace(settings,db,doc):
             if not isinstance(table,dict):
                 continue
             table_name=table.get("name") or table.get("table_name") or f"Table {table_index+1}"
-            st.markdown(f"**Editable: {table_name}**")
             table_rows=table.get("rows") or []
             if table_rows and isinstance(table_rows[0],list):
                 columns=table.get("columns") or table.get("headers") or []
@@ -213,7 +217,10 @@ def _workspace(settings,db,doc):
         if editable_tables:
             editable_value["tables"]=editable_tables
         edited_export_snapshot=json.dumps(editable_value,sort_keys=True,default=str)
-        export_edits_detected=edited_export_snapshot!=original_export_snapshot
+        current_edit_detected=edited_export_snapshot!=original_export_snapshot
+        if current_edit_detected:
+            st.session_state.export_dirty_docs[doc_key]=True
+        export_edits_detected=st.session_state.export_dirty_docs.get(doc_key,False)
         latest_value=extraction(db,doc["id"])
         files=all_exports(latest_value)
         formats={"JSON":"extraction.json","CSV":"extraction.csv","Excel":"extraction.xlsx","Word":"extraction.docx","ZIP":"all_exports.zip"}
@@ -242,6 +249,7 @@ def _workspace(settings,db,doc):
             with action_left:
                 if st.button("Save and export edits",use_container_width=True,key=f"save_export_edits_{doc['id']}"):
                     save_correction(db,doc["id"],editable_value)
+                    st.session_state.export_dirty_docs[doc_key]=False
                     st.success("Export edits saved. Download and Outlook actions are now enabled with updated data.")
                     st.rerun()
             with action_right:
