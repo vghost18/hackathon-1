@@ -263,14 +263,10 @@ def _workspace(settings,db,doc):
             with action_left:
                 st.download_button(f"Download {selected_format}",selected_data,file_name=selected_name,use_container_width=True,key=f"download_{doc['id']}_{selected_format.lower()}")
             with action_right:
-                if st.button(f"Open {selected_format} draft in Outlook",use_container_width=True,key=f"outlook_{doc['id']}_{selected_format.lower()}"):
-                    try:
-                        open_draft(settings.data_dir,selected_name,selected_data,doc["filename"])
-                        log_plugin(db,doc["id"],"outlook_draft","success",{"format":selected_format})
-                        st.success("Outlook opened a draft with the selected export attached. Review recipients, then send it yourself.")
-                    except OutlookDraftError as exc:
-                        log_plugin(db,doc["id"],"outlook_draft","failed",{"format":selected_format},error=str(exc))
-                        st.error(str(exc))
+                if st.button(f"Open Outlook Web",use_container_width=True,key=f"outlook_{doc['id']}_{selected_format.lower()}"):
+                    st.markdown("[Open Outlook Web](https://outlook.office.com/mail/)")
+                    log_plugin(db,doc["id"],"outlook_web_open","success",{"format":selected_format})
+                    st.info("Outlook Web link is ready. Open it and continue manually.")
 
 def _chat(settings,db):
     st.markdown("<div class='hero'><h1>Your document conversation</h1><p>Attach a PDF, analyze it, correct its data, export it, or simply ask a question.</p></div>",unsafe_allow_html=True)
