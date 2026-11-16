@@ -172,16 +172,19 @@ def _workspace(settings,db,doc):
         if st.button("Save corrections",key=f"save_corrections_{doc['id']}"):
             try: save_correction(db,doc["id"],json.loads(text)); st.success("Corrections saved."); st.rerun()
             except json.JSONDecodeError as exc: st.error(f"Invalid JSON: {exc}")
-        for table in value.get("tables",[]):
-            st.write(table.get("name","Table")); st.data_editor(table.get("rows",[]),num_rows="dynamic",key=f"table_{doc['id']}_{table.get('name','table')}")
     with st.expander("Export or send"):
         editable_value=json.loads(json.dumps(value))
         st.session_state.setdefault("export_dirty_docs",{})
         st.session_state.setdefault("last_saved_export_snapshot",{})
+        st.session_state.setdefault("saved_correction_snapshot",{})
         doc_key=str(doc["id"])
         st.caption("Edit the chosen output preview below. Save & Export appears only after edits are detected.")
-        if doc_key not in st.session_state.last_saved_export_snapshot:
-            st.session_state.last_saved_export_snapshot[doc_key]=json.dumps(value,sort_keys=True,default=str)
+        latest_value=extraction(db,doc["id"])
+        latest_snapshot=json.dumps(latest_value,sort_keys=True,default=str)
+        if st.session_state.saved_correction_snapshot.get(doc_key)!=latest_snapshot:
+            st.session_state.last_saved_export_snapshot[doc_key]=latest_snapshot
+            st.session_state.saved_correction_snapshot[doc_key]=latest_snapshot
+        editable_value=json.loads(json.dumps(latest_value))
         editable_fields=editable_value.get("fields",{})
         if isinstance(editable_fields,dict) and editable_fields:
             fields_df=pd.DataFrame([
@@ -219,10 +222,9 @@ def _workspace(settings,db,doc):
         if editable_tables:
             editable_value["tables"]=editable_tables
         edited_export_snapshot=json.dumps(editable_value,sort_keys=True,default=str)
-        current_edit_detected=edited_export_snapshot!=st.session_state.last_saved_export_snapshot.get(doc_key,"")
+        current_edit_detected=edited_export_snapshot!=st.session_state.last_saved_export_snapshot.get(doc_key,latest_snapshot)
         st.session_state.export_dirty_docs[doc_key]=current_edit_detected
         export_edits_detected=current_edit_detected
-        latest_value=extraction(db,doc["id"])
         files=all_exports(latest_value)
         formats={"JSON":"extraction.json","CSV":"extraction.csv","Excel":"extraction.xlsx","Word":"extraction.docx","ZIP":"all_exports.zip"}
         selected_format=st.selectbox("Choose output format",list(formats),key=f"format_{doc['id']}")
@@ -250,7 +252,9 @@ def _workspace(settings,db,doc):
             with action_left:
                 if st.button("Save and export edits",use_container_width=True,key=f"save_export_edits_{doc['id']}"):
                     save_correction(db,doc["id"],editable_value)
-                    st.session_state.last_saved_export_snapshot[doc_key]=json.dumps(editable_value,sort_keys=True,default=str)
+                    saved_snapshot=json.dumps(editable_value,sort_keys=True,default=str)
+                    st.session_state.last_saved_export_snapshot[doc_key]=saved_snapshot
+                    st.session_state.saved_correction_snapshot[doc_key]=saved_snapshot
                     st.session_state.export_dirty_docs[doc_key]=False
                     st.success("Export edits saved. Download and Outlook actions are now enabled with updated data.")
                     st.rerun()
