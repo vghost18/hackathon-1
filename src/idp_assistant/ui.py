@@ -167,30 +167,74 @@ def _workspace(settings,db,doc):
     with st.expander("Review and correct extraction"):
         text=st.text_area("Corrected JSON",json.dumps(value,indent=2),height=320,key=f"json_{doc['id']}")
         if st.button("Save corrections",key=f"save_corrections_{doc['id']}"):
-            try: save_correction(db,doc["id"],json.loads(text)); st.success("Corrections saved.")
+            try: save_correction(db,doc["id"],json.loads(text)); st.success("Corrections saved."); st.rerun()
             except json.JSONDecodeError as exc: st.error(f"Invalid JSON: {exc}")
         for table in value.get("tables",[]):
             st.write(table.get("name","Table")); st.data_editor(table.get("rows",[]),num_rows="dynamic",key=f"table_{doc['id']}_{table.get('name','table')}")
     with st.expander("Export or send"):
-        files=all_exports(value)
+        editable_value=json.loads(json.dumps(value))
+        st.caption("Edit the export preview (fields/tables), then save. Downloads and Outlook will use the saved version.")
+        editable_fields=editable_value.get("fields",{})
+        if isinstance(editable_fields,dict) and editable_fields:
+            fields_df=pd.DataFrame([
+                {
+                    "Field":key,
+                    "Value":item.get("value",item) if isinstance(item,dict) else item,
+                    "Source page":item.get("source_page","") if isinstance(item,dict) else "",
+                }
+                for key,item in editable_fields.items()
+            ])
+            edited_fields_df=st.data_editor(fields_df,num_rows="dynamic",use_container_width=True,key=f"export_fields_{doc['id']}")
+            rebuilt_fields={}
+            for _,row in edited_fields_df.iterrows():
+                field_name=str(row.get("Field","")).strip()
+                if not field_name:
+                    continue
+                rebuilt_fields[field_name]={
+                    "value":row.get("Value",""),
+                    "source_page":row.get("Source page",""),
+                }
+            editable_value["fields"]=rebuilt_fields
+        editable_tables=[]
+        for table_index,table in enumerate(editable_value.get("tables",[]) if isinstance(editable_value.get("tables",[]),list) else []):
+            if not isinstance(table,dict):
+                continue
+            table_name=table.get("name") or table.get("table_name") or f"Table {table_index+1}"
+            st.markdown(f"**Editable: {table_name}**")
+            table_rows=table.get("rows") or []
+            if table_rows and isinstance(table_rows[0],list):
+                columns=table.get("columns") or table.get("headers") or []
+                table_rows=[dict(zip(columns,row)) for row in table_rows]
+            edited_rows=st.data_editor(pd.DataFrame(table_rows),num_rows="dynamic",use_container_width=True,key=f"export_table_{doc['id']}_{table_index}")
+            updated_table=dict(table)
+            updated_table["rows"]=edited_rows.fillna("").to_dict(orient="records")
+            editable_tables.append(updated_table)
+        if editable_tables:
+            editable_value["tables"]=editable_tables
+        if st.button("Save export edits",key=f"save_export_edits_{doc['id']}"):
+            save_correction(db,doc["id"],editable_value)
+            st.success("Export edits saved. New exports will use your updated data.")
+            st.rerun()
+        latest_value=extraction(db,doc["id"])
+        files=all_exports(latest_value)
         formats={"JSON":"extraction.json","CSV":"extraction.csv","Excel":"extraction.xlsx","Word":"extraction.docx","ZIP":"all_exports.zip"}
         selected_format=st.selectbox("Choose output format",list(formats),key=f"format_{doc['id']}")
         selected_name=formats[selected_format]
         selected_data=files[selected_name]
         st.caption(f"Previewing {selected_format}. This is the file you will download or attach to Outlook.")
         if selected_format=="JSON":
-            st.json(value)
+            st.json(latest_value)
         elif selected_format=="CSV":
-            st.dataframe(pd.read_csv(io.BytesIO(selected_data)),use_container_width=True)
+            st.data_editor(pd.read_csv(io.BytesIO(selected_data)),num_rows="dynamic",use_container_width=True,key=f"preview_csv_{doc['id']}")
         elif selected_format=="Excel":
             workbook=pd.ExcelFile(io.BytesIO(selected_data))
             sheet_tabs=st.tabs(workbook.sheet_names)
             for tab,sheet in zip(sheet_tabs,workbook.sheet_names):
-                with tab: st.dataframe(pd.read_excel(workbook,sheet_name=sheet),use_container_width=True)
+                with tab: st.data_editor(pd.read_excel(workbook,sheet_name=sheet),num_rows="dynamic",use_container_width=True,key=f"preview_xlsx_{doc['id']}_{sheet}")
         elif selected_format=="Word":
             st.markdown("#### Document preview")
-            st.markdown(value.get("summary","No summary available."))
-            st.json({"document_type":value.get("document_type"),"fields":value.get("fields"),"tables":value.get("tables")})
+            st.markdown(latest_value.get("summary","No summary available."))
+            st.json({"document_type":latest_value.get("document_type"),"fields":latest_value.get("fields"),"tables":latest_value.get("tables")})
         else:
             with zipfile.ZipFile(io.BytesIO(selected_data)) as archive:
                 st.dataframe(pd.DataFrame({"Files in ZIP":archive.namelist()}),use_container_width=True,hide_index=True)
@@ -254,4 +298,3 @@ def render_application(settings):
     _init(); _style(); _sidebar(settings)
     if st.session_state.view=="Library": _library(settings.database_path)
     else: _chat(settings,settings.database_path)
-
