@@ -12,7 +12,7 @@ from idp_assistant.exporters import all_exports
 from idp_assistant.outlook_draft import open_draft,OutlookDraftError
 
 def _init():
-    st.session_state.setdefault("view","Chat"); st.session_state.setdefault("messages",[]); st.session_state.setdefault("document_id",None); st.session_state.setdefault("batch_document_ids",[]); st.session_state.setdefault("reset_nonce",0)
+    st.session_state.setdefault("view","Chat"); st.session_state.setdefault("messages",[]); st.session_state.setdefault("document_id",None); st.session_state.setdefault("batch_document_ids",[]); st.session_state.setdefault("session_document_ids",[]); st.session_state.setdefault("reset_nonce",0)
 
 def _reset_session():
     """Clear transient conversation state while keeping stored documents intact."""
@@ -22,6 +22,7 @@ def _reset_session():
     st.session_state.messages=[]
     st.session_state.document_id=None
     st.session_state.batch_document_ids=[]
+    st.session_state.session_document_ids=[]
     st.session_state.view="Chat"
     st.session_state.reset_nonce=st.session_state.get("reset_nonce",0)+1
 
@@ -52,8 +53,13 @@ def _sidebar(settings):
         st.success("Gemini ready") if settings.gemini_configured else st.info("Gemini key not set")
         st.caption(f"Model: {settings.gemini_model}")
 
+def _session_documents(db):
+    """Return only documents uploaded during this browser session."""
+    allowed=set(st.session_state.get("session_document_ids",[]))
+    return [doc for doc in list_documents(db) if doc["id"] in allowed]
+
 def _document_picker(db):
-    docs=list_documents(db)
+    docs=_session_documents(db)
     if not docs: return None
     options={f"{d['filename']}  ·  {d['page_count']} pages  ·  {d['processing_status']}":d["id"] for d in docs}
     labels=["— No active document —",*options]
@@ -76,6 +82,7 @@ def _upload(settings,db):
                 for file in files:
                     doc,duplicate=ingest_document(db,settings.data_dir,file.name,file.getvalue())
                     added.append((doc,duplicate))
+                st.session_state.session_document_ids.extend(doc["id"] for doc,_ in added if doc["id"] not in st.session_state.session_document_ids)
                 st.session_state.document_id=added[0][0]["id"]; st.session_state.batch_document_ids=[doc["id"] for doc,_ in added]
                 names=", ".join(f"**{doc['filename']}**" for doc,_ in added)
                 st.session_state.messages.append({"role":"assistant","content":f"I attached {names}. You can analyze this batch together or select one as the active document."})
@@ -223,7 +230,7 @@ def _chat(settings,db):
 
 def _library(db):
     st.markdown("<div class='hero'><h1>Document library</h1><p>Your stored files and their processing metadata.</p></div>",unsafe_allow_html=True)
-    docs=list_documents(db)
+    docs=_session_documents(db)
     if not docs: st.info("No documents stored yet. Add one from Chat."); return
     for d in docs:
         with st.container(border=True):
