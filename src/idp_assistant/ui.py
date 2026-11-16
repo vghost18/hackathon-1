@@ -3,13 +3,13 @@ from __future__ import annotations
 import json
 import io
 import zipfile
+import webbrowser
 import pandas as pd
 import streamlit as st
 from idp_assistant.storage import ingest_document,list_documents,get_document,extraction,save_correction,log_plugin,DocumentError
 from idp_assistant.processing import process_document
 from idp_assistant.intelligence import answer,IntelligenceError
 from idp_assistant.exporters import all_exports
-from idp_assistant.outlook_draft import open_draft,OutlookDraftError
 
 def _init():
     st.session_state.setdefault("view","Chat"); st.session_state.setdefault("messages",[]); st.session_state.setdefault("document_id",None); st.session_state.setdefault("batch_document_ids",[]); st.session_state.setdefault("session_document_ids",[]); st.session_state.setdefault("reset_nonce",0)
@@ -263,10 +263,10 @@ def _workspace(settings,db,doc):
             with action_left:
                 st.download_button(f"Download {selected_format}",selected_data,file_name=selected_name,use_container_width=True,key=f"download_{doc['id']}_{selected_format.lower()}")
             with action_right:
-                if st.button(f"Open Outlook Web",use_container_width=True,key=f"outlook_{doc['id']}_{selected_format.lower()}"):
-                    st.markdown("[Open Outlook Web](https://outlook.office.com/mail/)")
+                if st.button(f"Send via Outlook",use_container_width=True,key=f"outlook_{doc['id']}_{selected_format.lower()}"):
+                    webbrowser.open("https://outlook.office.com/mail/")
                     log_plugin(db,doc["id"],"outlook_web_open","success",{"format":selected_format})
-                    st.info("Outlook Web link is ready. Open it and continue manually.")
+                    st.rerun()
 
 def _chat(settings,db):
     st.markdown("<div class='hero'><h1>Your document conversation</h1><p>Attach a PDF, analyze it, correct its data, export it, or simply ask a question.</p></div>",unsafe_allow_html=True)
