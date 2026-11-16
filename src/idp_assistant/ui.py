@@ -177,9 +177,11 @@ def _workspace(settings,db,doc):
     with st.expander("Export or send"):
         editable_value=json.loads(json.dumps(value))
         st.session_state.setdefault("export_dirty_docs",{})
+        st.session_state.setdefault("last_saved_export_snapshot",{})
         doc_key=str(doc["id"])
-        st.caption("Edit the export preview (fields/tables). Save & Export appears only after edits are detected.")
-        original_export_snapshot=json.dumps(value,sort_keys=True,default=str)
+        st.caption("Edit the chosen output preview below. Save & Export appears only after edits are detected.")
+        if doc_key not in st.session_state.last_saved_export_snapshot:
+            st.session_state.last_saved_export_snapshot[doc_key]=json.dumps(value,sort_keys=True,default=str)
         editable_fields=editable_value.get("fields",{})
         if isinstance(editable_fields,dict) and editable_fields:
             fields_df=pd.DataFrame([
@@ -217,10 +219,9 @@ def _workspace(settings,db,doc):
         if editable_tables:
             editable_value["tables"]=editable_tables
         edited_export_snapshot=json.dumps(editable_value,sort_keys=True,default=str)
-        current_edit_detected=edited_export_snapshot!=original_export_snapshot
-        if current_edit_detected:
-            st.session_state.export_dirty_docs[doc_key]=True
-        export_edits_detected=st.session_state.export_dirty_docs.get(doc_key,False)
+        current_edit_detected=edited_export_snapshot!=st.session_state.last_saved_export_snapshot.get(doc_key,"")
+        st.session_state.export_dirty_docs[doc_key]=current_edit_detected
+        export_edits_detected=current_edit_detected
         latest_value=extraction(db,doc["id"])
         files=all_exports(latest_value)
         formats={"JSON":"extraction.json","CSV":"extraction.csv","Excel":"extraction.xlsx","Word":"extraction.docx","ZIP":"all_exports.zip"}
@@ -249,6 +250,7 @@ def _workspace(settings,db,doc):
             with action_left:
                 if st.button("Save and export edits",use_container_width=True,key=f"save_export_edits_{doc['id']}"):
                     save_correction(db,doc["id"],editable_value)
+                    st.session_state.last_saved_export_snapshot[doc_key]=json.dumps(editable_value,sort_keys=True,default=str)
                     st.session_state.export_dirty_docs[doc_key]=False
                     st.success("Export edits saved. Download and Outlook actions are now enabled with updated data.")
                     st.rerun()
