@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 
 
 class OutlookDraftError(RuntimeError):
@@ -19,7 +20,14 @@ def open_draft(
         import win32com.client  # type: ignore[import-not-found]
     except ImportError as exc:
         raise OutlookDraftError(
-            "Outlook draft support needs pywin32. Run: python -m pip install -r requirements.txt"
+            "Outlook draft support needs pywin32 in the same interpreter running this app.\n"
+            f"Current interpreter: {sys.executable}\n"
+            "Install with:\n"
+            f"  \"{sys.executable}\" -m pip install -r requirements.txt\n"
+            f"  \"{sys.executable}\" -m pip install pywin32\n"
+            "Then restart Streamlit using the same interpreter:\n"
+            f"  \"{sys.executable}\" -m streamlit run app.py\n"
+            f"Original import error: {exc}"
         ) from exc
 
     attachment_dir = data_dir / "outlook_drafts"
@@ -36,5 +44,8 @@ def open_draft(
         draft.Display()
     except Exception as exc:
         raise OutlookDraftError(
-            "Unable to open a local Outlook draft. Confirm classic Outlook is installed and configured."
+            "Unable to open a local Outlook draft. Confirm classic Outlook (desktop) is installed, "
+            "a mail profile is configured, and Outlook can open normally. "
+            f"Current interpreter: {sys.executable}. "
+            f"Underlying error: {exc}"
         ) from exc
