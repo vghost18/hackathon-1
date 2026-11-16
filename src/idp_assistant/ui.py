@@ -139,8 +139,6 @@ def _workspace(settings,db,doc):
                 "Field":key,
                 "Value":item.get("value",item) if isinstance(item,dict) else item,
                 "Source page":item.get("source_page","") if isinstance(item,dict) else "",
-                "Confidence":item.get("confidence","") if isinstance(item,dict) else "",
-                "Status":item.get("verification_status","") if isinstance(item,dict) else "",
             }
             for key,item in fields.items()
         ]
@@ -150,8 +148,6 @@ def _workspace(settings,db,doc):
                 "Field":item.get("field_name",item.get("name","")),
                 "Value":item.get("value",""),
                 "Source page":item.get("source_page",""),
-                "Confidence":item.get("confidence",""),
-                "Status":item.get("verification_status",""),
             }
             for item in fields if isinstance(item,dict)
         ]
