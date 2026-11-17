@@ -10,13 +10,33 @@ from PIL import Image
 from idp_assistant.db import get_connection
 class DocumentError(ValueError): pass
 SUPPORTED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".docx"}
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+MAX_PDF_PAGES = 10
 
 def _document_pages(filename: str, content: bytes) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     extension = Path(filename).suffix.lower()
     if extension == ".pdf":
-        pdf=fitz.open(stream=content,filetype="pdf")
-        pages=[{"number":i+1,"text":page.get_text("text"),"image":page.get_pixmap(matrix=fitz.Matrix(1.5,1.5),alpha=False).tobytes("png")} for i,page in enumerate(pdf)]
-        metadata=dict(pdf.metadata or {}); metadata["input_type"]="pdf"; pdf.close(); return pages,metadata
+        if not content.startswith(b"%PDF-"):
+            raise DocumentError("File extension is .pdf but the PDF signature is invalid.")
+        pdf = fitz.open(stream=content, filetype="pdf")
+        try:
+            if pdf.needs_pass:
+                raise DocumentError("This PDF is password-protected. Please upload an unprotected PDF.")
+            if len(pdf) > MAX_PDF_PAGES:
+                raise DocumentError(f"PDF page limit exceeded: maximum is {MAX_PDF_PAGES} pages.")
+            pages = [
+                {
+                    "number": i + 1,
+                    "text": page.get_text("text"),
+                    "image": page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False).tobytes("png"),
+                }
+                for i, page in enumerate(pdf)
+            ]
+            metadata = dict(pdf.metadata or {})
+            metadata["input_type"] = "pdf"
+            return pages, metadata
+        finally:
+            pdf.close()
     if extension == ".docx":
         word=WordDocument(io.BytesIO(content))
         chunks=[paragraph.text for paragraph in word.paragraphs if paragraph.text.strip()]
@@ -29,10 +49,17 @@ def _document_pages(filename: str, content: bytes) -> tuple[list[dict[str, Any]]
     raise DocumentError("Supported file types are PDF, PNG, JPG, JPEG, and DOCX.")
 
 def ingest_document(database_path: Path, data_dir: Path, filename: str, content: bytes) -> tuple[dict[str, Any], bool]:
-    if not content or Path(filename).suffix.lower() not in SUPPORTED_EXTENSIONS: raise DocumentError("Supported file types are PDF, PNG, JPG, JPEG, and DOCX.")
+    if not content or Path(filename).suffix.lower() not in SUPPORTED_EXTENSIONS:
+        raise DocumentError("Supported file types are PDF, PNG, JPG, JPEG, and DOCX.")
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise DocumentError(f"File size limit exceeded: maximum is {MAX_UPLOAD_BYTES // (1024 * 1024)} MB.")
     try:
-        pages,metadata=_document_pages(filename,content); page_count=len(pages)
-    except Exception as exc: raise DocumentError(f"Invalid or unreadable PDF: {exc}") from exc
+        pages, metadata = _document_pages(filename, content)
+        page_count = len(pages)
+    except DocumentError:
+        raise
+    except Exception as exc:
+        raise DocumentError(f"Invalid or unreadable file: {exc}") from exc
     digest=hashlib.sha256(content).hexdigest(); target_dir=data_dir/"documents"; target_dir.mkdir(parents=True,exist_ok=True)
     with get_connection(database_path) as conn:
         existing=conn.execute("SELECT * FROM documents WHERE file_hash=?",(digest,)).fetchone()
