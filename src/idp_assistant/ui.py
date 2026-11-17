@@ -169,7 +169,6 @@ def _workspace(settings,db,doc):
         st.dataframe(pd.DataFrame(rows,columns=columns or None),use_container_width=True,hide_index=True)
     with st.expander("Native extraction"):
         st.code(json.dumps(value,indent=2),language="json")
-    with st.expander("Export or send"):
         st.session_state.setdefault("export_dirty_docs",{})
         st.session_state.setdefault("last_saved_export_snapshot",{})
         st.session_state.setdefault("saved_correction_snapshot",{})
