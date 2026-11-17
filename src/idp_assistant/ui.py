@@ -223,6 +223,7 @@ def _workspace(settings,db,doc):
         st.session_state.setdefault("last_saved_export_snapshot",{})
         st.session_state.setdefault("saved_correction_snapshot",{})
         st.session_state.setdefault("export_edit_buffers",{})
+        st.session_state.setdefault("export_dirty_state",{})
         doc_key=str(doc["id"])
         latest_value=extraction(db,doc["id"])
         latest_snapshot=json.dumps(latest_value,sort_keys=True,default=str)
@@ -287,9 +288,12 @@ def _workspace(settings,db,doc):
                 st.dataframe(pd.DataFrame({"Files in ZIP":archive.namelist()}), width="stretch", hide_index=True)
         st.session_state.export_edit_buffers[doc_key]=json.loads(json.dumps(editable_value))
         edited_export_snapshot=json.dumps(editable_value,sort_keys=True,default=str)
-        current_edit_detected=edited_export_snapshot!=st.session_state.last_saved_export_snapshot.get(doc_key,latest_snapshot)
-        st.session_state.export_dirty_docs[doc_key]=current_edit_detected
-        export_edits_detected=current_edit_detected
+        baseline_snapshot=st.session_state.last_saved_export_snapshot.get(doc_key,latest_snapshot)
+        current_edit_detected=edited_export_snapshot!=baseline_snapshot
+        previous_dirty=bool(st.session_state.export_dirty_state.get(doc_key,False))
+        export_edits_detected=previous_dirty or current_edit_detected
+        st.session_state.export_dirty_state[doc_key]=export_edits_detected
+        st.session_state.export_dirty_docs[doc_key]=export_edits_detected
         selected_name=formats[selected_format]
         selected_data=all_exports(extraction(db,doc["id"]))[selected_name]
         action_left,action_right=st.columns(2)
@@ -301,6 +305,7 @@ def _workspace(settings,db,doc):
                     st.session_state.last_saved_export_snapshot[doc_key]=saved_snapshot
                     st.session_state.saved_correction_snapshot[doc_key]=saved_snapshot
                     st.session_state.export_dirty_docs[doc_key]=False
+                    st.session_state.export_dirty_state[doc_key]=False
                     st.success("Export edits saved. Download and Outlook actions are now enabled with updated data.")
                     st.rerun()
             with action_right:
