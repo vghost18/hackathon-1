@@ -13,6 +13,7 @@ from langgraph.graph import END, START, StateGraph
 
 from idp_assistant.intelligence import analyse, IntelligenceError
 from idp_assistant.storage import load_processing_pages, save_processing
+from idp_assistant.validation import run_validations
 
 
 class ProcessingState(TypedDict, total=False):
@@ -65,6 +66,8 @@ def _persist(state: ProcessingState) -> ProcessingState:
     confidence = float(result.get("confidence", 0.0) or 0.0)
     if confidence < 0.45:
         result["document_type"] = "unknown"
+    validation_issues = run_validations(result)
+    result["validation_issues"] = validation_issues
     coverage = {
         "total_pages": len(report),
         "processed_pages": len(report),
@@ -73,6 +76,9 @@ def _persist(state: ProcessingState) -> ProcessingState:
             page["page_number"] for page in report if page["review_required"]
         ],
         "failed_pages": [],
+        "validation_issue_count": len(validation_issues),
+        "validation_error_count": sum(1 for issue in validation_issues if issue.get("severity") == "error"),
+        "validation_warning_count": sum(1 for issue in validation_issues if issue.get("severity") == "warning"),
     }
     result["coverage_report"] = coverage
     save_processing(
@@ -81,7 +87,7 @@ def _persist(state: ProcessingState) -> ProcessingState:
         result.get("document_type", "Other"),
         result.get("summary", ""),
         result,
-        "partial" if coverage["pages_requiring_review"] else "complete",
+        "partial" if coverage["pages_requiring_review"] or validation_issues else "complete",
         report,
     )
     return {"result": result}

@@ -165,7 +165,22 @@ def _workspace(settings,db,doc):
             for item in fields if isinstance(item,dict)
         ]
     if field_rows:
-        st.dataframe(pd.DataFrame(field_rows),use_container_width=True,hide_index=True)
+        validation_issues=value.get("validation_issues",[]) if isinstance(value,dict) else []
+        issue_map={}
+        for issue in validation_issues if isinstance(validation_issues,list) else []:
+            key=str(issue.get("field","")).strip()
+            if key:
+                issue_map.setdefault(key,[]).append(issue)
+        display_rows=[]
+        for row in field_rows:
+            field_name=str(row.get("Field",""))
+            issues=issue_map.get(field_name,[])
+            issue_summary=" | ".join(str(item.get("message","")) for item in issues if item.get("message"))
+            severity_rank={"error":2,"warning":1}
+            worst=max((severity_rank.get(str(item.get("severity","")).lower(),0) for item in issues),default=0)
+            flag="⚠ Error" if worst==2 else ("⚠ Warning" if worst==1 else "")
+            display_rows.append({**row,"Review":flag,"Issue":issue_summary})
+        st.dataframe(pd.DataFrame(display_rows),use_container_width=True,hide_index=True)
     tables=value.get("tables",[])
     for table_index,table in enumerate(tables if isinstance(tables,list) else []):
         if not isinstance(table,dict):
@@ -176,6 +191,31 @@ def _workspace(settings,db,doc):
             rows=[dict(zip(columns,row)) for row in rows]
         st.markdown(f"**{table.get('name') or table.get('table_name') or f'Table {table_index+1}'}**")
         st.dataframe(pd.DataFrame(rows,columns=columns or None),use_container_width=True,hide_index=True)
+    validation_issues=value.get("validation_issues",[]) if isinstance(value,dict) else []
+    if validation_issues:
+        error_count=sum(1 for issue in validation_issues if str(issue.get("severity","")).lower()=="error")
+        warning_count=sum(1 for issue in validation_issues if str(issue.get("severity","")).lower()=="warning")
+        st.error(f"Validation issues found: {error_count} error(s), {warning_count} warning(s). Review before publishing.")
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "Severity":str(issue.get("severity","")).title(),
+                        "Field":issue.get("field",""),
+                        "Issue":issue.get("message",""),
+                        "Source page":issue.get("source_page",""),
+                        "Detected value":issue.get("actual",""),
+                        "Expected value":issue.get("expected",""),
+                        "Confidence":issue.get("confidence",""),
+                    }
+                    for issue in validation_issues
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.success("No validation issues detected.")
     with st.expander("Native extraction"):
         st.code(json.dumps(value,indent=2),language="json")
     with st.expander("Export or send"):
