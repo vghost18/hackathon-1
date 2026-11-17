@@ -35,7 +35,7 @@ def _snapshot(value):
     return json.dumps(_normalized_for_snapshot(value), sort_keys=True, separators=(",", ":"), default=str)
 
 def _init():
-    st.session_state.setdefault("view","Chat"); st.session_state.setdefault("messages",[]); st.session_state.setdefault("document_id",None); st.session_state.setdefault("batch_document_ids",[]); st.session_state.setdefault("session_document_ids",[]); st.session_state.setdefault("reset_nonce",0)
+    st.session_state.setdefault("view","Chat"); st.session_state.setdefault("messages",[]); st.session_state.setdefault("document_id",None); st.session_state.setdefault("batch_document_ids",[]); st.session_state.setdefault("session_document_ids",[]); st.session_state.setdefault("reset_nonce",0); st.session_state.setdefault("analysis_error",None)
 
 def _reset_session():
     """Clear transient conversation state while keeping stored documents intact."""
@@ -97,9 +97,13 @@ def _document_picker(db):
 def _upload(settings,db):
     with st.expander("Attach documents",expanded=not st.session_state.document_id):
         files=st.file_uploader("Up to 3 PDFs, images, or DOCX files",type=["pdf","png","jpg","jpeg","docx"],accept_multiple_files=True,label_visibility="collapsed")
-        if files and st.button("Add documents to conversation",type="primary"):
+        over_limit=bool(files) and len(files)>3
+        if over_limit:
+            st.warning("You selected more than 3 documents. Please keep only 3 before adding.")
+        add_clicked=st.button("Add documents to conversation",type="primary",disabled=over_limit)
+        if files and add_clicked:
             if len(files)>3:
-                st.error("Choose no more than 3 documents at once."); return
+                st.warning("You selected more than 3 documents. Please keep only 3 before adding."); return
             added=[]
             try:
                 for file in files:
@@ -117,6 +121,8 @@ def _upload(settings,db):
 
 def _analysis(settings,db,doc):
     if not doc: return
+    if st.session_state.get("analysis_error"):
+        st.error(st.session_state["analysis_error"])
     left,right=st.columns([3,1])
     doc_type=doc.get("document_type") or "Type not identified yet"
     extraction_value=extraction(db,doc["id"])
@@ -133,6 +139,7 @@ def _analysis(settings,db,doc):
         batch_ids=st.session_state.batch_document_ids
         analyze_label=f"Analyze all {len(batch_ids)} documents" if len(batch_ids)>1 else "Analyze document"
         if st.button(analyze_label, disabled=not settings.gemini_configured, width="stretch"):
+            st.session_state.analysis_error=None
             ids=batch_ids if len(batch_ids)>1 else [doc["id"]]
             failures=[]
             try:
@@ -144,9 +151,12 @@ def _analysis(settings,db,doc):
                 if results:
                     names=", ".join(f"**{item[0]['filename']}** ({item[1].get('document_type','Other')})" for item in results)
                     st.session_state.messages.append({"role":"assistant","content":f"Analysis complete for {names}. Each document is shown in its own output tab below."})
-                if failures: st.error("Some documents could not be analyzed: "+"; ".join(failures))
+                if failures:
+                    st.session_state.analysis_error="Some documents could not be analyzed: "+"; ".join(failures)
                 st.rerun()
-            except IntelligenceError as exc: st.error(str(exc))
+            except IntelligenceError as exc:
+                st.session_state.analysis_error=str(exc)
+                st.rerun()
     if not settings.gemini_configured: st.caption("Add GEMINI_API_KEY in .env, then restart the app to enable analysis.")
 
 def _workspace(settings,db,doc):
