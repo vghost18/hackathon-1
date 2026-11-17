@@ -41,14 +41,14 @@ def _sidebar(settings):
     with st.sidebar:
         st.markdown("## ◈ DocuMind")
         st.caption("Document intelligence, in one conversation.")
-        if st.button("＋ New conversation",use_container_width=True):
+        if st.button("＋ New conversation", width="stretch"):
             st.session_state.messages=[]; st.session_state.document_id=None; st.session_state.view="Chat"; st.rerun()
-        if st.button("↺ Reset session",use_container_width=True,help="Clear the current document, chat, extraction tables, and selections. Stored documents remain in the library."):
+        if st.button("↺ Reset session", width="stretch", help="Clear the current document, chat, extraction tables, and selections. Stored documents remain in the library."):
             _reset_session()
             st.rerun()
         st.divider()
-        if st.button("💬 Chat",use_container_width=True): st.session_state.view="Chat"; st.rerun()
-        if st.button("▣ Document library",use_container_width=True): st.session_state.view="Library"; st.rerun()
+        if st.button("💬 Chat", width="stretch"): st.session_state.view="Chat"; st.rerun()
+        if st.button("▣ Document library", width="stretch"): st.session_state.view="Library"; st.rerun()
         st.divider()
         st.success("Gemini ready") if settings.gemini_configured else st.info("Gemini key not set")
         st.caption(f"Model: {settings.gemini_model}")
@@ -109,7 +109,7 @@ def _analysis(settings,db,doc):
     with right:
         batch_ids=st.session_state.batch_document_ids
         analyze_label=f"Analyze all {len(batch_ids)} documents" if len(batch_ids)>1 else "Analyze document"
-        if st.button(analyze_label,disabled=not settings.gemini_configured,use_container_width=True):
+        if st.button(analyze_label, disabled=not settings.gemini_configured, width="stretch"):
             ids=batch_ids if len(batch_ids)>1 else [doc["id"]]
             failures=[]
             try:
@@ -140,9 +140,9 @@ def _workspace(settings,db,doc):
                     rows=[]
                     for item in content:
                         rows.append(item if isinstance(item,dict) else {"Value":item})
-                    st.dataframe(pd.DataFrame(rows),use_container_width=True,hide_index=True)
+                    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
                 elif isinstance(content,dict):
-                    st.dataframe(pd.DataFrame([{"Key":key,"Value":item} for key,item in content.items()]),use_container_width=True,hide_index=True)
+                    st.dataframe(pd.DataFrame([{"Key":key,"Value":item} for key,item in content.items()]), width="stretch", hide_index=True)
                 else:
                     st.write(content)
     fields=value.get("fields",{})
@@ -180,7 +180,7 @@ def _workspace(settings,db,doc):
             worst=max((severity_rank.get(str(item.get("severity","")).lower(),0) for item in issues),default=0)
             flag="⚠ Error" if worst==2 else ("⚠ Warning" if worst==1 else "")
             display_rows.append({**row,"Review":flag,"Issue":issue_summary})
-        st.dataframe(pd.DataFrame(display_rows),use_container_width=True,hide_index=True)
+        st.dataframe(pd.DataFrame(display_rows), width="stretch", hide_index=True)
     tables=value.get("tables",[])
     for table_index,table in enumerate(tables if isinstance(tables,list) else []):
         if not isinstance(table,dict):
@@ -190,7 +190,7 @@ def _workspace(settings,db,doc):
         if rows and isinstance(rows[0],list):
             rows=[dict(zip(columns,row)) for row in rows]
         st.markdown(f"**{table.get('name') or table.get('table_name') or f'Table {table_index+1}'}**")
-        st.dataframe(pd.DataFrame(rows,columns=columns or None),use_container_width=True,hide_index=True)
+        st.dataframe(pd.DataFrame(rows, columns=columns or None), width="stretch", hide_index=True)
     validation_issues=value.get("validation_issues",[]) if isinstance(value,dict) else []
     if validation_issues:
         error_count=sum(1 for issue in validation_issues if str(issue.get("severity","")).lower()=="error")
@@ -211,7 +211,7 @@ def _workspace(settings,db,doc):
                     for issue in validation_issues
                 ]
             ),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
     else:
@@ -239,7 +239,7 @@ def _workspace(settings,db,doc):
             st.json(editable_value)
         elif selected_format=="CSV":
             csv_df=pd.DataFrame([{k:(v.get("value",v) if isinstance(v,dict) else v) for k,v in editable_value.get("fields",{}).items()}])
-            edited_csv_df=st.data_editor(csv_df,num_rows="dynamic",use_container_width=True,key=f"preview_csv_{doc['id']}")
+            edited_csv_df=st.data_editor(csv_df, num_rows="dynamic", width="stretch", key=f"preview_csv_{doc['id']}")
             if not edited_csv_df.empty:
                 first_row=edited_csv_df.iloc[0].to_dict()
                 editable_value["fields"]={key:{"value":val,"source_page":editable_value.get("fields",{}).get(key,{}).get("source_page","")} for key,val in first_row.items()}
@@ -254,7 +254,7 @@ def _workspace(settings,db,doc):
                     }
                     for key,item in editable_value.get("fields",{}).items()
                 ])
-                edited_fields_df=st.data_editor(fields_df,num_rows="dynamic",use_container_width=True,key=f"preview_excel_fields_{doc['id']}")
+                edited_fields_df=st.data_editor(fields_df, num_rows="dynamic", width="stretch", key=f"preview_excel_fields_{doc['id']}")
                 rebuilt_fields={}
                 for _,row in edited_fields_df.iterrows():
                     field_name=str(row.get("Field","")).strip()
@@ -271,7 +271,7 @@ def _workspace(settings,db,doc):
                     if table_rows and isinstance(table_rows[0],list):
                         columns=table.get("columns") or table.get("headers") or []
                         table_rows=[dict(zip(columns,row)) for row in table_rows]
-                    edited_rows=st.data_editor(pd.DataFrame(table_rows),num_rows="dynamic",use_container_width=True,key=f"preview_excel_table_{doc['id']}_{table_index}")
+                    edited_rows=st.data_editor(pd.DataFrame(table_rows), num_rows="dynamic", width="stretch", key=f"preview_excel_table_{doc['id']}_{table_index}")
                     updated_table=dict(table)
                     updated_table["rows"]=edited_rows.fillna("").to_dict(orient="records")
                     updated_tables.append(updated_table)
@@ -284,7 +284,7 @@ def _workspace(settings,db,doc):
         else:
             files=all_exports(latest_value)
             with zipfile.ZipFile(io.BytesIO(files["all_exports.zip"])) as archive:
-                st.dataframe(pd.DataFrame({"Files in ZIP":archive.namelist()}),use_container_width=True,hide_index=True)
+                st.dataframe(pd.DataFrame({"Files in ZIP":archive.namelist()}), width="stretch", hide_index=True)
         st.session_state.export_edit_buffers[doc_key]=json.loads(json.dumps(editable_value))
         edited_export_snapshot=json.dumps(editable_value,sort_keys=True,default=str)
         current_edit_detected=edited_export_snapshot!=st.session_state.last_saved_export_snapshot.get(doc_key,latest_snapshot)
@@ -295,7 +295,7 @@ def _workspace(settings,db,doc):
         action_left,action_right=st.columns(2)
         if export_edits_detected:
             with action_left:
-                if st.button("Save and export edits",use_container_width=True,key=f"save_export_edits_{doc['id']}"):
+                if st.button("Save and export edits", width="stretch", key=f"save_export_edits_{doc['id']}"):
                     save_correction(db,doc["id"],editable_value)
                     saved_snapshot=json.dumps(editable_value,sort_keys=True,default=str)
                     st.session_state.last_saved_export_snapshot[doc_key]=saved_snapshot
@@ -307,7 +307,7 @@ def _workspace(settings,db,doc):
                 st.info("Save changes to enable Download and Outlook actions.")
         else:
             with action_left:
-                st.download_button(f"Download {selected_format}",selected_data,file_name=selected_name,use_container_width=True,key=f"download_{doc['id']}_{selected_format.lower()}")
+                st.download_button(f"Download {selected_format}", selected_data, file_name=selected_name, width="stretch", key=f"download_{doc['id']}_{selected_format.lower()}")
             with action_right:
                 if st.link_button("Send via Outlook",url="https://outlook.office.com/mail/",width="stretch",key=f"outlook_{doc['id']}_{selected_format.lower()}"):
                     log_plugin(db,doc["id"],"outlook_web_open","success",{"format":selected_format})
