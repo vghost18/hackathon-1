@@ -62,6 +62,9 @@ def _persist(state: ProcessingState) -> ProcessingState:
         return state
     result = state["result"]
     report = state["report"]
+    confidence = float(result.get("confidence", 0.0) or 0.0)
+    if confidence < 0.45:
+        result["document_type"] = "unknown"
     coverage = {
         "total_pages": len(report),
         "processed_pages": len(report),

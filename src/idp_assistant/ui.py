@@ -96,7 +96,16 @@ def _analysis(settings,db,doc):
     if not doc: return
     left,right=st.columns([3,1])
     doc_type=doc.get("document_type") or "Type not identified yet"
-    with left: st.markdown(f"<div class='doc-chip'>📄 {doc['filename']} · {doc['page_count']} pages · {doc['processing_status']} · <b>{doc_type}</b></div>",unsafe_allow_html=True)
+    extraction_value=extraction(db,doc["id"])
+    confidence_text=""
+    if extraction_value and isinstance(extraction_value,dict):
+        raw_confidence=extraction_value.get("confidence")
+        try:
+            if raw_confidence is not None:
+                confidence_text=f" · {float(raw_confidence)*100:.0f}%"
+        except Exception:
+            confidence_text=""
+    with left: st.markdown(f"<div class='doc-chip'>📄 {doc['filename']} · {doc['page_count']} pages · {doc['processing_status']} · <b>{doc_type}{confidence_text}</b></div>",unsafe_allow_html=True)
     with right:
         batch_ids=st.session_state.batch_document_ids
         analyze_label=f"Analyze all {len(batch_ids)} documents" if len(batch_ids)>1 else "Analyze document"

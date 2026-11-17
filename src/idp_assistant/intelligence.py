@@ -29,7 +29,58 @@ def _local_candidates(text:str)->dict[str,str]:
             if value: result[key]=value
     return result
 
-def _normalize_extraction(value:dict[str,Any])->dict[str,Any]:
+_CANONICAL_DOC_TYPES = {
+    "resume": "resume",
+    "cv": "resume",
+    "curriculum vitae": "resume",
+    "invoice": "invoice",
+    "receipt": "receipt",
+    "bank statement": "bank_statement",
+    "statement": "bank_statement",
+    "flight ticket": "flight_ticket",
+    "air ticket": "flight_ticket",
+    "hotel bill": "hotel_bill",
+    "hotel invoice": "hotel_bill",
+    "unknown": "unknown",
+    "generic": "unknown",
+    "other": "unknown",
+}
+
+
+def _canonical_doc_type(raw: Any) -> str:
+    text = str(raw or "").strip().lower().replace("_", " ")
+    if not text:
+        return "unknown"
+    return _CANONICAL_DOC_TYPES.get(text, "unknown")
+
+
+def _classification_confidence(value: dict[str, Any], doc_type: str, pages: list[dict[str, Any]]) -> float:
+    explicit = value.get("classification_confidence")
+    try:
+        if explicit is not None:
+            score = float(explicit)
+            if score > 1:
+                score = score / 100.0
+            return max(0.0, min(1.0, score))
+    except Exception:
+        pass
+
+    fields = value.get("fields", {})
+    field_count = len(fields) if isinstance(fields, dict) else 0
+    table_count = len(value.get("tables", [])) if isinstance(value.get("tables", []), list) else 0
+    text_pages = sum(1 for p in pages if str(p.get("text", "")).strip())
+
+    if doc_type == "unknown":
+        return 0.35
+    base = 0.55
+    base += min(0.25, field_count * 0.02)
+    base += min(0.15, table_count * 0.05)
+    if text_pages:
+        base += 0.05
+    return max(0.0, min(1.0, base))
+
+
+def _normalize_extraction(value:dict[str,Any], pages:list[dict[str,Any]])->dict[str,Any]:
     fields=value.get("fields",{})
     if isinstance(fields,list):
         normalized={}
@@ -52,6 +103,12 @@ def _normalize_extraction(value:dict[str,Any])->dict[str,Any]:
         normalized_tables.append(table)
     value["tables"]=normalized_tables
     value.setdefault("sections",{})
+    canonical = _canonical_doc_type(value.get("document_type"))
+    value["document_type"] = canonical
+    value["confidence"] = round(_classification_confidence(value, canonical, pages), 2)
+    value.pop("top_k", None)
+    value.pop("rationale", None)
+    value.pop("signals", None)
     return value
 def _ask(settings:Settings,prompt:str)->str:
     if not settings.gemini_configured: raise IntelligenceError("Gemini is not configured. Add GEMINI_API_KEY to .env.")
@@ -62,7 +119,7 @@ def analyse(settings:Settings,pages:list[dict[str,Any]])->dict[str,Any]:
     text="\n\n".join(f"[PAGE {p['number']}]\n{p.get('text','')}" for p in pages)
     local_hints=_local_candidates(text)
     prompt=f"""Analyze this document. Use supplied page images to read scanned content.
-Return JSON with document_type, summary, fields, sections, tables, warnings.
+Return JSON with document_type, confidence, summary, fields, sections, tables, warnings.
 The fields object MUST be a flat JSON object where every key maps to an object
 with exactly value, source_page, and source_text. Put the human-readable value
 in value, never a nested object or label. Use the page where the value appears.
@@ -72,7 +129,7 @@ currency, payment method, and amount due. For bank statements extract bank,
 account holder, masked account number, statement period, opening/closing
 balance, transactions, deposits, withdrawals, fees, and ending balance.
 For every other document preserve all meaningful key/value fields with source_page
-and source_text. Never put confidence or verification fields in the output.
+and source_text.
 If document_type is Resume, sections MUST include these keys even when empty:
 personal_information, professional_summary, experience, projects, education,
 certifications, skills, awards, languages, publications.
@@ -93,6 +150,6 @@ SOURCE:
     try: value=json.loads(raw.strip().removeprefix(fence+"json").removeprefix(fence).removesuffix(fence).strip())
     except Exception as exc: raise IntelligenceError("Gemini returned invalid structured JSON.") from exc
     if not isinstance(value,dict): raise IntelligenceError("Gemini returned a non-object extraction.")
-    return _normalize_extraction(value)
+    return _normalize_extraction(value, pages)
 def answer(settings:Settings,pages:list[dict[str,Any]],question:str)->str:
     text="\n".join(f"[Page {p['number']}] {p['text']}" for p in pages); return _ask(settings,f"Answer only from this document. Cite page numbers. If unavailable say so. DOCUMENT:\n{text[:120000]}\nQUESTION: {question}")
