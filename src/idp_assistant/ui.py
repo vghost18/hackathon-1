@@ -274,7 +274,7 @@ def _chat(settings,db):
     _analysis(settings,db,doc)
     for message in st.session_state.messages:
         with st.chat_message(message["role"]): st.markdown(message["content"])
-    prompt=st.chat_input("Ask anything about your document…")
+    prompt=st.chat_input("Ask about your document…")
     if prompt:
         st.session_state.messages.append({"role":"user","content":prompt})
         if not doc: reply="Attach or select a PDF first."
