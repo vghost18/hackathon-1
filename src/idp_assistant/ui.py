@@ -167,11 +167,8 @@ def _workspace(settings,db,doc):
             rows=[dict(zip(columns,row)) for row in rows]
         st.markdown(f"**{table.get('name') or table.get('table_name') or f'Table {table_index+1}'}**")
         st.dataframe(pd.DataFrame(rows,columns=columns or None),use_container_width=True,hide_index=True)
-    with st.expander("Review and correct extraction"):
-        text=st.text_area("Corrected JSON",json.dumps(value,indent=2),height=320,key=f"json_{doc['id']}")
-        if st.button("Save corrections",key=f"save_corrections_{doc['id']}"):
-            try: save_correction(db,doc["id"],json.loads(text)); st.success("Corrections saved."); st.rerun()
-            except json.JSONDecodeError as exc: st.error(f"Invalid JSON: {exc}")
+    with st.expander("Native extraction"):
+        st.code(json.dumps(value,indent=2),language="json")
     with st.expander("Export or send"):
         st.session_state.setdefault("export_dirty_docs",{})
         st.session_state.setdefault("last_saved_export_snapshot",{})
