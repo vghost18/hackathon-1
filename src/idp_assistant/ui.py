@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 import io
+import math
 import zipfile
 import webbrowser
 import pandas as pd
@@ -10,6 +11,28 @@ from idp_assistant.storage import ingest_document,list_documents,get_document,ex
 from idp_assistant.processing import process_document
 from idp_assistant.intelligence import answer,IntelligenceError
 from idp_assistant.exporters import all_exports
+
+def _normalized_for_snapshot(value):
+    """Create a stable, JSON-serializable structure for dirty-check snapshots."""
+    if isinstance(value, dict):
+        return {str(k): _normalized_for_snapshot(v) for k, v in sorted(value.items(), key=lambda item: str(item[0]))}
+    if isinstance(value, list):
+        return [_normalized_for_snapshot(v) for v in value]
+    if isinstance(value, tuple):
+        return [_normalized_for_snapshot(v) for v in value]
+    if isinstance(value, float):
+        if math.isnan(value) or math.isinf(value):
+            return None
+        return round(value, 10)
+    if hasattr(value, "item"):
+        try:
+            return _normalized_for_snapshot(value.item())
+        except Exception:
+            return str(value)
+    return value
+
+def _snapshot(value):
+    return json.dumps(_normalized_for_snapshot(value), sort_keys=True, separators=(",", ":"), default=str)
 
 def _init():
     st.session_state.setdefault("view","Chat"); st.session_state.setdefault("messages",[]); st.session_state.setdefault("document_id",None); st.session_state.setdefault("batch_document_ids",[]); st.session_state.setdefault("session_document_ids",[]); st.session_state.setdefault("reset_nonce",0)
@@ -227,7 +250,7 @@ def _workspace(settings,db,doc):
         st.session_state.setdefault("export_saved_notice",{})
         doc_key=str(doc["id"])
         latest_value=extraction(db,doc["id"])
-        latest_snapshot=json.dumps(latest_value,sort_keys=True,default=str)
+        latest_snapshot=_snapshot(latest_value)
         if doc_key not in st.session_state.export_edit_buffers:
             st.session_state.last_saved_export_snapshot[doc_key]=latest_snapshot
             st.session_state.saved_correction_snapshot[doc_key]=latest_snapshot
@@ -289,7 +312,7 @@ def _workspace(settings,db,doc):
             with zipfile.ZipFile(io.BytesIO(files["all_exports.zip"])) as archive:
                 st.dataframe(pd.DataFrame({"Files in ZIP":archive.namelist()}), width="stretch", hide_index=True)
         st.session_state.export_edit_buffers[doc_key]=json.loads(json.dumps(editable_value))
-        edited_export_snapshot=json.dumps(editable_value,sort_keys=True,default=str)
+        edited_export_snapshot=_snapshot(editable_value)
         baseline_snapshot=st.session_state.last_saved_export_snapshot.get(doc_key,latest_snapshot)
         current_edit_detected=edited_export_snapshot!=baseline_snapshot
         export_edits_detected=current_edit_detected
@@ -302,7 +325,7 @@ def _workspace(settings,db,doc):
             with action_left:
                 if st.button("Save and export edits", width="stretch", key=f"save_export_edits_{doc['id']}"):
                     save_correction(db,doc["id"],editable_value)
-                    saved_snapshot=json.dumps(editable_value,sort_keys=True,default=str)
+                    saved_snapshot=_snapshot(editable_value)
                     st.session_state.last_saved_export_snapshot[doc_key]=saved_snapshot
                     st.session_state.saved_correction_snapshot[doc_key]=saved_snapshot
                     st.session_state.export_dirty_docs[doc_key]=False
