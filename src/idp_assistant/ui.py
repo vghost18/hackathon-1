@@ -169,6 +169,100 @@ def _workspace(settings,db,doc):
         st.dataframe(pd.DataFrame(rows,columns=columns or None),use_container_width=True,hide_index=True)
     with st.expander("Native extraction"):
         st.code(json.dumps(value,indent=2),language="json")
+    with st.expander("Export or send"):
+        st.session_state.setdefault("export_dirty_docs",{})
+        st.session_state.setdefault("last_saved_export_snapshot",{})
+        st.session_state.setdefault("saved_correction_snapshot",{})
+        st.session_state.setdefault("export_edit_buffers",{})
+        doc_key=str(doc["id"])
+        latest_value=extraction(db,doc["id"])
+        latest_snapshot=json.dumps(latest_value,sort_keys=True,default=str)
+        if st.session_state.saved_correction_snapshot.get(doc_key)!=latest_snapshot:
+            st.session_state.last_saved_export_snapshot[doc_key]=latest_snapshot
+            st.session_state.saved_correction_snapshot[doc_key]=latest_snapshot
+            st.session_state.export_edit_buffers[doc_key]=json.loads(json.dumps(latest_value))
+            st.session_state.export_dirty_docs[doc_key]=False
+        editable_value=json.loads(json.dumps(st.session_state.export_edit_buffers.get(doc_key,latest_value)))
+        st.caption("Choose an output format and edit only that output preview. Save appears whenever new changes are detected.")
+        formats={"JSON":"extraction.json","CSV":"extraction.csv","Excel":"extraction.xlsx","Word":"extraction.docx","ZIP":"all_exports.zip"}
+        selected_format=st.selectbox("Choose output format",list(formats),key=f"format_{doc['id']}")
+        if selected_format=="JSON":
+            st.json(editable_value)
+        elif selected_format=="CSV":
+            csv_df=pd.DataFrame([{k:(v.get("value",v) if isinstance(v,dict) else v) for k,v in editable_value.get("fields",{}).items()}])
+            edited_csv_df=st.data_editor(csv_df,num_rows="dynamic",use_container_width=True,key=f"preview_csv_{doc['id']}")
+            if not edited_csv_df.empty:
+                first_row=edited_csv_df.iloc[0].to_dict()
+                editable_value["fields"]={key:{"value":val,"source_page":editable_value.get("fields",{}).get(key,{}).get("source_page","")} for key,val in first_row.items()}
+        elif selected_format=="Excel":
+            excel_tabs=st.tabs(["Fields","Tables"])
+            with excel_tabs[0]:
+                fields_df=pd.DataFrame([
+                    {
+                        "Field":key,
+                        "Value":item.get("value",item) if isinstance(item,dict) else item,
+                        "Source page":item.get("source_page","") if isinstance(item,dict) else "",
+                    }
+                    for key,item in editable_value.get("fields",{}).items()
+                ])
+                edited_fields_df=st.data_editor(fields_df,num_rows="dynamic",use_container_width=True,key=f"preview_excel_fields_{doc['id']}")
+                rebuilt_fields={}
+                for _,row in edited_fields_df.iterrows():
+                    field_name=str(row.get("Field","")).strip()
+                    if not field_name:
+                        continue
+                    rebuilt_fields[field_name]={"value":row.get("Value",""),"source_page":row.get("Source page","")}
+                editable_value["fields"]=rebuilt_fields
+            with excel_tabs[1]:
+                updated_tables=[]
+                for table_index,table in enumerate(editable_value.get("tables",[]) if isinstance(editable_value.get("tables",[]),list) else []):
+                    if not isinstance(table,dict):
+                        continue
+                    table_rows=table.get("rows") or []
+                    if table_rows and isinstance(table_rows[0],list):
+                        columns=table.get("columns") or table.get("headers") or []
+                        table_rows=[dict(zip(columns,row)) for row in table_rows]
+                    edited_rows=st.data_editor(pd.DataFrame(table_rows),num_rows="dynamic",use_container_width=True,key=f"preview_excel_table_{doc['id']}_{table_index}")
+                    updated_table=dict(table)
+                    updated_table["rows"]=edited_rows.fillna("").to_dict(orient="records")
+                    updated_tables.append(updated_table)
+                if updated_tables:
+                    editable_value["tables"]=updated_tables
+        elif selected_format=="Word":
+            st.markdown("#### Document preview")
+            st.markdown(editable_value.get("summary","No summary available."))
+            st.json({"document_type":editable_value.get("document_type"),"fields":editable_value.get("fields"),"tables":editable_value.get("tables")})
+        else:
+            files=all_exports(latest_value)
+            with zipfile.ZipFile(io.BytesIO(files["all_exports.zip"])) as archive:
+                st.dataframe(pd.DataFrame({"Files in ZIP":archive.namelist()}),use_container_width=True,hide_index=True)
+        st.session_state.export_edit_buffers[doc_key]=json.loads(json.dumps(editable_value))
+        edited_export_snapshot=json.dumps(editable_value,sort_keys=True,default=str)
+        current_edit_detected=edited_export_snapshot!=st.session_state.last_saved_export_snapshot.get(doc_key,latest_snapshot)
+        st.session_state.export_dirty_docs[doc_key]=current_edit_detected
+        export_edits_detected=current_edit_detected
+        selected_name=formats[selected_format]
+        selected_data=all_exports(extraction(db,doc["id"]))[selected_name]
+        action_left,action_right=st.columns(2)
+        if export_edits_detected:
+            with action_left:
+                if st.button("Save and export edits",use_container_width=True,key=f"save_export_edits_{doc['id']}"):
+                    save_correction(db,doc["id"],editable_value)
+                    saved_snapshot=json.dumps(editable_value,sort_keys=True,default=str)
+                    st.session_state.last_saved_export_snapshot[doc_key]=saved_snapshot
+                    st.session_state.saved_correction_snapshot[doc_key]=saved_snapshot
+                    st.session_state.export_dirty_docs[doc_key]=False
+                    st.success("Export edits saved. Download and Outlook actions are now enabled with updated data.")
+                    st.rerun()
+            with action_right:
+                st.info("Save changes to enable Download and Outlook actions.")
+        else:
+            with action_left:
+                st.download_button(f"Download {selected_format}",selected_data,file_name=selected_name,use_container_width=True,key=f"download_{doc['id']}_{selected_format.lower()}")
+            with action_right:
+                if st.link_button("Send via Outlook",url="https://outlook.office.com/mail/",width="stretch",key=f"outlook_{doc['id']}_{selected_format.lower()}"):
+                    log_plugin(db,doc["id"],"outlook_web_open","success",{"format":selected_format})
+                    st.rerun()
 
 def _chat(settings,db):
     st.markdown("<div class='hero'><h1>Your document conversation</h1><p>Attach a document, analyze it, correct its data, export it, or simply ask a question.</p></div>",unsafe_allow_html=True)
