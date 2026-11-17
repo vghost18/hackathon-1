@@ -268,7 +268,7 @@ def _workspace(settings,db,doc):
                     st.rerun()
 
 def _chat(settings,db):
-    st.markdown("<div class='hero'><h1>Your document conversation</h1><p>Attach a PDF, analyze it, correct its data, export it, or simply ask a question.</p></div>",unsafe_allow_html=True)
+    st.markdown("<div class='hero'><h1>Your document conversation</h1><p>Attach a document, analyze it, correct its data, export it, or simply ask a question.</p></div>",unsafe_allow_html=True)
     _upload(settings,db)
     doc=_document_picker(db)
     _analysis(settings,db,doc)
