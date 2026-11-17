@@ -232,6 +232,7 @@ def _workspace(settings,db,doc):
             st.session_state.export_edit_buffers[doc_key]=json.loads(json.dumps(latest_value))
             st.session_state.export_dirty_docs[doc_key]=False
         editable_value=json.loads(json.dumps(st.session_state.export_edit_buffers.get(doc_key,latest_value)))
+        editable_value.setdefault("review_status", latest_value.get("review_status", "draft") if isinstance(latest_value, dict) else "draft")
         st.caption("Choose an output format and edit only that output preview. Save appears whenever new changes are detected.")
         formats={"JSON":"extraction.json","CSV":"extraction.csv","Excel":"extraction.xlsx","Word":"extraction.docx","ZIP":"all_exports.zip"}
         selected_format=st.selectbox("Choose output format",list(formats),key=f"format_{doc['id']}")
@@ -288,30 +289,58 @@ def _workspace(settings,db,doc):
         st.session_state.export_edit_buffers[doc_key]=json.loads(json.dumps(editable_value))
         edited_export_snapshot=json.dumps(editable_value,sort_keys=True,default=str)
         current_edit_detected=edited_export_snapshot!=st.session_state.last_saved_export_snapshot.get(doc_key,latest_snapshot)
+        if current_edit_detected and str(editable_value.get("review_status", "draft")).lower()=="approved":
+            editable_value["review_status"]="draft"
+            st.session_state.export_edit_buffers[doc_key]=json.loads(json.dumps(editable_value))
+            edited_export_snapshot=json.dumps(editable_value,sort_keys=True,default=str)
+            current_edit_detected=edited_export_snapshot!=st.session_state.last_saved_export_snapshot.get(doc_key,latest_snapshot)
         st.session_state.export_dirty_docs[doc_key]=current_edit_detected
         export_edits_detected=current_edit_detected
         selected_name=formats[selected_format]
         selected_data=all_exports(extraction(db,doc["id"]))[selected_name]
         action_left,action_right=st.columns(2)
+        review_status=str(editable_value.get("review_status","draft")).lower()
+        publish_allowed=review_status=="approved"
+
         if export_edits_detected:
             with action_left:
-                if st.button("Save and export edits", width="stretch", key=f"save_export_edits_{doc['id']}"):
+                if st.button("Save edits", width="stretch", key=f"save_export_edits_{doc['id']}"):
+                    editable_value["review_status"]="draft"
                     save_correction(db,doc["id"],editable_value)
                     saved_snapshot=json.dumps(editable_value,sort_keys=True,default=str)
                     st.session_state.last_saved_export_snapshot[doc_key]=saved_snapshot
                     st.session_state.saved_correction_snapshot[doc_key]=saved_snapshot
                     st.session_state.export_dirty_docs[doc_key]=False
-                    st.success("Export edits saved. Download and Outlook actions are now enabled with updated data.")
+                    st.success("Edits saved. Publish is blocked until reviewer approves.")
                     st.rerun()
             with action_right:
-                st.info("Save changes to enable Download and Outlook actions.")
+                if st.button("Approve for publish", width="stretch", key=f"approve_publish_{doc['id']}"):
+                    editable_value["review_status"]="approved"
+                    save_correction(db,doc["id"],editable_value)
+                    saved_snapshot=json.dumps(editable_value,sort_keys=True,default=str)
+                    st.session_state.last_saved_export_snapshot[doc_key]=saved_snapshot
+                    st.session_state.saved_correction_snapshot[doc_key]=saved_snapshot
+                    st.session_state.export_dirty_docs[doc_key]=False
+                    st.success("Approved. Publish actions are now enabled.")
+                    st.rerun()
         else:
             with action_left:
-                st.download_button(f"Download {selected_format}", selected_data, file_name=selected_name, width="stretch", key=f"download_{doc['id']}_{selected_format.lower()}")
+                st.download_button(
+                    f"Download {selected_format}",
+                    selected_data,
+                    file_name=selected_name,
+                    width="stretch",
+                    disabled=not publish_allowed,
+                    key=f"download_{doc['id']}_{selected_format.lower()}",
+                )
             with action_right:
-                if st.link_button("Send via Outlook",url="https://outlook.office.com/mail/",width="stretch",key=f"outlook_{doc['id']}_{selected_format.lower()}"):
-                    log_plugin(db,doc["id"],"outlook_web_open","success",{"format":selected_format})
-                    st.rerun()
+                if publish_allowed:
+                    if st.link_button("Send via Outlook",url="https://outlook.office.com/mail/",width="stretch",key=f"outlook_{doc['id']}_{selected_format.lower()}"):
+                        log_plugin(db,doc["id"],"outlook_web_open","success",{"format":selected_format})
+                        st.rerun()
+                else:
+                    st.warning("Publish blocked until reviewer approves.")
+                    st.button("Approve for publish", width="stretch", key=f"approve_publish_idle_{doc['id']}")
 
 def _chat(settings,db):
     st.markdown("<div class='hero'><h1>Your document conversation</h1><p>Attach a document, analyze it, correct its data, export it, or simply ask a question.</p></div>",unsafe_allow_html=True)
