@@ -224,14 +224,16 @@ def _workspace(settings,db,doc):
         st.session_state.setdefault("saved_correction_snapshot",{})
         st.session_state.setdefault("export_edit_buffers",{})
         st.session_state.setdefault("export_dirty_state",{})
+        st.session_state.setdefault("export_saved_notice",{})
         doc_key=str(doc["id"])
         latest_value=extraction(db,doc["id"])
         latest_snapshot=json.dumps(latest_value,sort_keys=True,default=str)
-        if st.session_state.saved_correction_snapshot.get(doc_key)!=latest_snapshot:
+        if doc_key not in st.session_state.export_edit_buffers:
             st.session_state.last_saved_export_snapshot[doc_key]=latest_snapshot
             st.session_state.saved_correction_snapshot[doc_key]=latest_snapshot
             st.session_state.export_edit_buffers[doc_key]=json.loads(json.dumps(latest_value))
             st.session_state.export_dirty_docs[doc_key]=False
+            st.session_state.export_dirty_state[doc_key]=False
         editable_value=json.loads(json.dumps(st.session_state.export_edit_buffers.get(doc_key,latest_value)))
         st.caption("Choose an output format and edit only that output preview. Save appears whenever new changes are detected.")
         formats={"JSON":"extraction.json","CSV":"extraction.csv","Excel":"extraction.xlsx","Word":"extraction.docx","ZIP":"all_exports.zip"}
@@ -290,8 +292,7 @@ def _workspace(settings,db,doc):
         edited_export_snapshot=json.dumps(editable_value,sort_keys=True,default=str)
         baseline_snapshot=st.session_state.last_saved_export_snapshot.get(doc_key,latest_snapshot)
         current_edit_detected=edited_export_snapshot!=baseline_snapshot
-        previous_dirty=bool(st.session_state.export_dirty_state.get(doc_key,False))
-        export_edits_detected=previous_dirty or current_edit_detected
+        export_edits_detected=current_edit_detected
         st.session_state.export_dirty_state[doc_key]=export_edits_detected
         st.session_state.export_dirty_docs[doc_key]=export_edits_detected
         selected_name=formats[selected_format]
@@ -306,11 +307,14 @@ def _workspace(settings,db,doc):
                     st.session_state.saved_correction_snapshot[doc_key]=saved_snapshot
                     st.session_state.export_dirty_docs[doc_key]=False
                     st.session_state.export_dirty_state[doc_key]=False
-                    st.success("Export edits saved. Download and Outlook actions are now enabled with updated data.")
+                    st.session_state.export_saved_notice[doc_key]=True
                     st.rerun()
             with action_right:
                 st.info("Save changes to enable Download and Outlook actions.")
         else:
+            if st.session_state.export_saved_notice.get(doc_key):
+                st.success("Export edits saved. Download and Outlook actions are now enabled with updated data.")
+                st.session_state.export_saved_notice[doc_key]=False
             with action_left:
                 st.download_button(f"Download {selected_format}", selected_data, file_name=selected_name, width="stretch", key=f"download_{doc['id']}_{selected_format.lower()}")
             with action_right:
