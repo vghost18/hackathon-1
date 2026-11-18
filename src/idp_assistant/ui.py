@@ -98,12 +98,17 @@ def _upload(settings,db):
     with st.expander("Attach documents",expanded=not st.session_state.document_id):
         files=st.file_uploader("Up to 3 PDFs, images, or DOCX files",type=["pdf","png","jpg","jpeg","docx"],accept_multiple_files=True,label_visibility="collapsed")
         over_limit=bool(files) and len(files)>3
+        file_over_10mb=next((f for f in (files or []) if getattr(f,"size",0)>10*1024*1024),None)
         if over_limit:
             st.warning("You selected more than 3 documents. Please keep only 3 before adding.")
-        add_clicked=st.button("Add documents to conversation",type="primary",disabled=over_limit)
+        if file_over_10mb:
+            st.warning(f"'{file_over_10mb.name}' exceeds 10 MB. Please upload files of 10 MB or less.")
+        add_clicked=st.button("Add documents to conversation",type="primary",disabled=over_limit or bool(file_over_10mb))
         if files and add_clicked:
             if len(files)>3:
                 st.warning("You selected more than 3 documents. Please keep only 3 before adding."); return
+            if file_over_10mb:
+                st.warning(f"'{file_over_10mb.name}' exceeds 10 MB. Please upload files of 10 MB or less."); return
             added=[]
             try:
                 for file in files:
