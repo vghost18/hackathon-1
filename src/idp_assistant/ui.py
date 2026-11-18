@@ -112,7 +112,11 @@ def _upload(settings,db):
             added=[]
             try:
                 for file in files:
-                    doc,duplicate=ingest_document(db,settings.data_dir,file.name,file.getvalue())
+                    file_bytes=file.getvalue()
+                    if not file_bytes.startswith(b"%PDF-"):
+                        st.warning(f"'{file.name}' is not a valid PDF file (signature mismatch). Please upload a real PDF.")
+                        return
+                    doc,duplicate=ingest_document(db,settings.data_dir,file.name,file_bytes)
                     added.append((doc,duplicate))
                 st.session_state.session_document_ids.extend(doc["id"] for doc,_ in added if doc["id"] not in st.session_state.session_document_ids)
                 st.session_state.document_id=added[0][0]["id"]; st.session_state.batch_document_ids=[doc["id"] for doc,_ in added]
