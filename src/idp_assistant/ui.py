@@ -5,6 +5,7 @@ import io
 import math
 import zipfile
 import webbrowser
+from dataclasses import replace
 import pandas as pd
 import streamlit as st
 from idp_assistant.storage import ingest_document,list_documents,get_document,extraction,save_correction,log_plugin,DocumentError
@@ -35,10 +36,10 @@ def _snapshot(value):
     return json.dumps(_normalized_for_snapshot(value), sort_keys=True, separators=(",", ":"), default=str)
 
 def _init():
-    st.session_state.setdefault("view","Chat"); st.session_state.setdefault("messages",[]); st.session_state.setdefault("document_id",None); st.session_state.setdefault("batch_document_ids",[]); st.session_state.setdefault("session_document_ids",[]); st.session_state.setdefault("reset_nonce",0); st.session_state.setdefault("analysis_error",None)
+    st.session_state.setdefault("view","Chat"); st.session_state.setdefault("messages",[]); st.session_state.setdefault("document_id",None); st.session_state.setdefault("batch_document_ids",[]); st.session_state.setdefault("session_document_ids",[]); st.session_state.setdefault("reset_nonce",0); st.session_state.setdefault("analysis_error",None); st.session_state.setdefault("local_mode",False); st.session_state.setdefault("force_fresh_ingest",False)
 
 def _reset_session():
-    """Clear transient conversation state while keeping stored documents intact."""
+    """Clear transient conversation state and force fresh ingestion on next upload."""
     for key in list(st.session_state):
         if key.startswith(("json_", "table_", "format_", "active_document_")):
             del st.session_state[key]
@@ -47,6 +48,7 @@ def _reset_session():
     st.session_state.batch_document_ids=[]
     st.session_state.session_document_ids=[]
     st.session_state.view="Chat"
+    st.session_state.force_fresh_ingest=True
     st.session_state.reset_nonce=st.session_state.get("reset_nonce",0)+1
 
 def _style():
@@ -73,8 +75,14 @@ def _sidebar(settings):
         if st.button("💬 Chat", width="stretch"): st.session_state.view="Chat"; st.rerun()
         if st.button("▣ Document library", width="stretch"): st.session_state.view="Library"; st.rerun()
         st.divider()
-        st.success("Gemini ready") if settings.gemini_configured else st.info("Gemini key not set")
-        st.caption(f"Model: {settings.gemini_model}")
+        st.session_state.local_mode=st.toggle("LOCAL",value=st.session_state.get("local_mode",False),help="Run extraction locally and disable chat.")
+        provider=(settings.model_provider or "openai").lower()
+        if provider=="openai":
+            st.success("OpenAI ready") if settings.openai_configured else st.info("OpenAI key not set")
+            st.caption(f"Provider: OpenAI · Model: {settings.openai_model}")
+        else:
+            st.success("Gemini ready") if settings.gemini_configured else st.info("Gemini key not set")
+            st.caption(f"Provider: Gemini · Model: {settings.gemini_model}")
 
 def _session_documents(db):
     """Return only documents uploaded during this browser session."""
@@ -116,7 +124,7 @@ def _upload(settings,db):
                     if not file_bytes.startswith(b"%PDF-"):
                         st.warning(f"'{file.name}' is not a valid PDF file (signature mismatch). Please upload a real PDF.")
                         return
-                    doc,duplicate=ingest_document(db,settings.data_dir,file.name,file_bytes)
+                    doc,duplicate=ingest_document(db,settings.data_dir,file.name,file_bytes,reuse_existing=not st.session_state.get("force_fresh_ingest",False))
                     added.append((doc,duplicate))
                 st.session_state.session_document_ids.extend(doc["id"] for doc,_ in added if doc["id"] not in st.session_state.session_document_ids)
                 st.session_state.document_id=added[0][0]["id"]; st.session_state.batch_document_ids=[doc["id"] for doc,_ in added]
@@ -125,6 +133,7 @@ def _upload(settings,db):
                     st.session_state.export_dirty_docs[str(doc["id"])]=False
                 names=", ".join(f"**{doc['filename']}**" for doc,_ in added)
                 st.session_state.messages.append({"role":"assistant","content":f"I attached {names}. You can analyze this batch together or select one as the active document."})
+                st.session_state.force_fresh_ingest=False
                 st.rerun()
             except DocumentError as exc: st.error(str(exc))
 
@@ -147,15 +156,20 @@ def _analysis(settings,db,doc):
     with right:
         batch_ids=st.session_state.batch_document_ids
         analyze_label=f"Analyze all {len(batch_ids)} documents" if len(batch_ids)>1 else "Analyze document"
-        if st.button(analyze_label, disabled=not settings.gemini_configured, width="stretch"):
+        provider=(settings.model_provider or "openai").lower()
+        analysis_configured=True if st.session_state.get("local_mode") else (settings.openai_configured if provider=="openai" else settings.gemini_configured)
+        if st.button(analyze_label, disabled=not analysis_configured, width="stretch"):
             st.session_state.analysis_error=None
             ids=batch_ids if len(batch_ids)>1 else [doc["id"]]
             failures=[]
             try:
                 with st.spinner(f"Reading and extracting {len(ids)} document{'s' if len(ids)>1 else ''}..."):
                     results=[]
+                    local_settings=settings
+                    if st.session_state.get("local_mode"):
+                        local_settings=replace(settings,local_mode=True)
                     for document_id in ids:
-                        try: results.append((get_document(db,document_id),process_document(settings,db,get_document(db,document_id))))
+                        try: results.append((get_document(db,document_id),process_document(local_settings,db,get_document(db,document_id))))
                         except IntelligenceError as exc: failures.append(str(exc))
                 if results:
                     names=", ".join(f"**{item[0]['filename']}** ({item[1].get('document_type','Other')})" for item in results)
@@ -166,7 +180,14 @@ def _analysis(settings,db,doc):
             except IntelligenceError as exc:
                 st.session_state.analysis_error=str(exc)
                 st.rerun()
-    if not settings.gemini_configured: st.caption("Add GEMINI_API_KEY in .env, then restart the app to enable analysis.")
+    provider=(settings.model_provider or "openai").lower()
+    if st.session_state.get("local_mode"):
+        st.caption("LOCAL mode is ON: analysis runs without Gemini/OpenAI; chat is disabled.")
+    else:
+        if provider=="openai" and not settings.openai_configured:
+            st.caption("Add OPENAI_API_KEY in .env, then restart the app to enable analysis.")
+        if provider=="gemini" and not settings.gemini_configured:
+            st.caption("Add GEMINI_API_KEY in .env, then restart the app to enable analysis.")
 
 def _workspace(settings,db,doc):
     if not doc: return
@@ -277,59 +298,25 @@ def _workspace(settings,db,doc):
             st.session_state.export_dirty_docs[doc_key]=False
             st.session_state.export_dirty_state[doc_key]=False
         editable_value=json.loads(json.dumps(st.session_state.export_edit_buffers.get(doc_key,latest_value)))
-        st.caption("Choose an output format and edit only that output preview. Save appears whenever new changes are detected.")
+        st.caption("Edit extracted fields below and save. Download and Outlook use the saved JSON extraction.")
+        fields_df=pd.DataFrame([
+            {
+                "Field":key,
+                "Value":item.get("value",item) if isinstance(item,dict) else item,
+                "Source page":item.get("source_page","") if isinstance(item,dict) else "",
+            }
+            for key,item in editable_value.get("fields",{}).items()
+        ])
+        edited_fields_df=st.data_editor(fields_df, num_rows="dynamic", width="stretch", key=f"preview_json_fields_{doc['id']}")
+        rebuilt_fields={}
+        for _,row in edited_fields_df.iterrows():
+            field_name=str(row.get("Field","")).strip()
+            if not field_name:
+                continue
+            rebuilt_fields[field_name]={"value":row.get("Value",""),"source_page":row.get("Source page","")}
+        editable_value["fields"]=rebuilt_fields
         formats={"JSON":"extraction.json","CSV":"extraction.csv","Excel":"extraction.xlsx","Word":"extraction.docx","ZIP":"all_exports.zip"}
-        selected_format=st.selectbox("Choose output format",list(formats),key=f"format_{doc['id']}")
-        if selected_format=="JSON":
-            st.json(editable_value)
-        elif selected_format=="CSV":
-            csv_df=pd.DataFrame([{k:(v.get("value",v) if isinstance(v,dict) else v) for k,v in editable_value.get("fields",{}).items()}])
-            edited_csv_df=st.data_editor(csv_df, num_rows="dynamic", width="stretch", key=f"preview_csv_{doc['id']}")
-            if not edited_csv_df.empty:
-                first_row=edited_csv_df.iloc[0].to_dict()
-                editable_value["fields"]={key:{"value":val,"source_page":editable_value.get("fields",{}).get(key,{}).get("source_page","")} for key,val in first_row.items()}
-        elif selected_format=="Excel":
-            excel_tabs=st.tabs(["Fields","Tables"])
-            with excel_tabs[0]:
-                fields_df=pd.DataFrame([
-                    {
-                        "Field":key,
-                        "Value":item.get("value",item) if isinstance(item,dict) else item,
-                        "Source page":item.get("source_page","") if isinstance(item,dict) else "",
-                    }
-                    for key,item in editable_value.get("fields",{}).items()
-                ])
-                edited_fields_df=st.data_editor(fields_df, num_rows="dynamic", width="stretch", key=f"preview_excel_fields_{doc['id']}")
-                rebuilt_fields={}
-                for _,row in edited_fields_df.iterrows():
-                    field_name=str(row.get("Field","")).strip()
-                    if not field_name:
-                        continue
-                    rebuilt_fields[field_name]={"value":row.get("Value",""),"source_page":row.get("Source page","")}
-                editable_value["fields"]=rebuilt_fields
-            with excel_tabs[1]:
-                updated_tables=[]
-                for table_index,table in enumerate(editable_value.get("tables",[]) if isinstance(editable_value.get("tables",[]),list) else []):
-                    if not isinstance(table,dict):
-                        continue
-                    table_rows=table.get("rows") or []
-                    if table_rows and isinstance(table_rows[0],list):
-                        columns=table.get("columns") or table.get("headers") or []
-                        table_rows=[dict(zip(columns,row)) for row in table_rows]
-                    edited_rows=st.data_editor(pd.DataFrame(table_rows), num_rows="dynamic", width="stretch", key=f"preview_excel_table_{doc['id']}_{table_index}")
-                    updated_table=dict(table)
-                    updated_table["rows"]=edited_rows.fillna("").to_dict(orient="records")
-                    updated_tables.append(updated_table)
-                if updated_tables:
-                    editable_value["tables"]=updated_tables
-        elif selected_format=="Word":
-            st.markdown("#### Document preview")
-            st.markdown(editable_value.get("summary","No summary available."))
-            st.json({"document_type":editable_value.get("document_type"),"fields":editable_value.get("fields"),"tables":editable_value.get("tables")})
-        else:
-            files=all_exports(latest_value)
-            with zipfile.ZipFile(io.BytesIO(files["all_exports.zip"])) as archive:
-                st.dataframe(pd.DataFrame({"Files in ZIP":archive.namelist()}), width="stretch", hide_index=True)
+        selected_format="JSON"
         st.session_state.export_edit_buffers[doc_key]=json.loads(json.dumps(editable_value))
         edited_export_snapshot=_snapshot(editable_value)
         baseline_snapshot=st.session_state.last_saved_export_snapshot.get(doc_key,latest_snapshot)
@@ -371,11 +358,16 @@ def _chat(settings,db):
     _analysis(settings,db,doc)
     for message in st.session_state.messages:
         with st.chat_message(message["role"]): st.markdown(message["content"])
-    prompt=st.chat_input("Ask about your document…")
+    prompt=None if st.session_state.get("local_mode") else st.chat_input("Ask about your document…")
+    if st.session_state.get("local_mode"):
+        st.info("Chat is disabled in LOCAL mode. Turn LOCAL off to use chat.")
     if prompt:
         st.session_state.messages.append({"role":"user","content":prompt})
         if not doc: reply="Attach or select a PDF first."
-        elif not settings.gemini_configured: reply="Your PDF is stored. Add GEMINI_API_KEY to .env and restart DocuMind for AI-powered answers."
+        elif ((settings.model_provider or "openai").lower()=="openai" and not settings.openai_configured):
+            reply="Your PDF is stored. Add OPENAI_API_KEY to .env and restart DocuMind for AI-powered answers."
+        elif ((settings.model_provider or "openai").lower()=="gemini" and not settings.gemini_configured):
+            reply="Your PDF is stored. Add GEMINI_API_KEY to .env and restart DocuMind for AI-powered answers."
         else:
             try: reply=answer(settings,[{"number":p["page_number"],"text":p["native_text"] or ""} for p in doc["pages"]],prompt)
             except IntelligenceError as exc: reply=str(exc)
