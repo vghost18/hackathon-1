@@ -62,9 +62,13 @@ def ingest_document(database_path: Path, data_dir: Path, filename: str, content:
         raise DocumentError(f"Invalid or unreadable file: {exc}") from exc
     digest=hashlib.sha256(content).hexdigest(); target_dir=data_dir/"documents"; target_dir.mkdir(parents=True,exist_ok=True)
     with get_connection(database_path) as conn:
-        if reuse_existing:
-            existing=conn.execute("SELECT * FROM documents WHERE file_hash=?",(digest,)).fetchone()
-            if existing: return dict(existing),True
+        existing=conn.execute("SELECT * FROM documents WHERE file_hash=?",(digest,)).fetchone()
+        if existing and reuse_existing:
+            return dict(existing),True
+        if existing and not reuse_existing:
+            # DB enforces UNIQUE(file_hash), so for "fresh ingest" mode we remove prior row first.
+            conn.execute("DELETE FROM documents WHERE file_hash=?",(digest,))
+            conn.commit()
         target=target_dir/f"{digest}{Path(filename).suffix.lower()}"; target.write_bytes(content)
         cur=conn.execute("INSERT INTO documents(file_hash,filename,storage_path,metadata_json,page_count,processing_status) VALUES(?,?,?,?,?,'stored')",(digest,filename,str(target),json.dumps(metadata),page_count))
         doc_id=cur.lastrowid; conn.executemany("INSERT INTO document_pages(document_id,page_number,native_text,processing_status,review_required) VALUES(?,?,?,'native_text',?)",[(doc_id,p["number"],p["text"],int(not p["text"].strip())) for p in pages]); conn.commit()
