@@ -315,8 +315,8 @@ def _workspace(settings,db,doc):
                 continue
             rebuilt_fields[field_name]={"value":row.get("Value",""),"source_page":row.get("Source page","")}
         editable_value["fields"]=rebuilt_fields
-        formats={"JSON":"extraction.json","CSV":"extraction.csv","Excel":"extraction.xlsx","Word":"extraction.docx","ZIP":"all_exports.zip"}
-        selected_format="JSON"
+        formats={"JSON":"extraction.json","CSV":"extraction.csv","Excel":"extraction.xlsx","API Payload":"api_payload.json","ZIP":"all_exports.zip"}
+        selected_format=st.selectbox("Choose output format",list(formats),key=f"format_{doc['id']}")
         st.session_state.export_edit_buffers[doc_key]=json.loads(json.dumps(editable_value))
         edited_export_snapshot=_snapshot(editable_value)
         baseline_snapshot=st.session_state.last_saved_export_snapshot.get(doc_key,latest_snapshot)
@@ -325,9 +325,45 @@ def _workspace(settings,db,doc):
         st.session_state.export_dirty_state[doc_key]=export_edits_detected
         st.session_state.export_dirty_docs[doc_key]=export_edits_detected
         selected_name=formats[selected_format]
-        selected_data=all_exports(extraction(db,doc["id"]))[selected_name]
-        action_left,action_right=st.columns(2)
+        export_bundle=all_exports(extraction(db,doc["id"]))
+        if selected_name=="api_payload.json":
+            selected_data=json.dumps(editable_value, indent=2, ensure_ascii=False).encode("utf-8")
+        else:
+            selected_data=export_bundle[selected_name]
+
+        st.markdown("#### Format preview")
+        if selected_format=="JSON":
+            st.json(editable_value)
+        elif selected_format=="CSV":
+            try:
+                preview_df=pd.read_csv(io.StringIO(selected_data.decode("utf-8")))
+                st.dataframe(preview_df, width="stretch", hide_index=True)
+            except Exception:
+                st.code(selected_data.decode("utf-8", errors="ignore"), language="csv")
+        elif selected_format=="Excel":
+            st.info("Excel preview shown as table from current extracted fields.")
+            excel_preview_df=pd.DataFrame(
+                [
+                    {
+                        "Field":k,
+                        "Value":v.get("value",v) if isinstance(v,dict) else v,
+                        "Source page":v.get("source_page","") if isinstance(v,dict) else "",
+                    }
+                    for k,v in editable_value.get("fields",{}).items()
+                ]
+            )
+            st.dataframe(excel_preview_df, width="stretch", hide_index=True)
+        elif selected_format=="API Payload":
+            st.json(editable_value)
+        elif selected_format=="ZIP":
+            try:
+                with zipfile.ZipFile(io.BytesIO(selected_data)) as archive:
+                    st.dataframe(pd.DataFrame({"Files in ZIP":archive.namelist()}), width="stretch", hide_index=True)
+            except Exception:
+                st.info("ZIP generated and ready for download.")
+
         if export_edits_detected:
+            action_left,action_right=st.columns(2)
             with action_left:
                 if st.button("Save and export edits", width="stretch", key=f"save_export_edits_{doc['id']}"):
                     save_correction(db,doc["id"],editable_value)
@@ -344,12 +380,17 @@ def _workspace(settings,db,doc):
             if st.session_state.export_saved_notice.get(doc_key):
                 st.success("Export edits saved. Download and Outlook actions are now enabled with updated data.")
                 st.session_state.export_saved_notice[doc_key]=False
-            with action_left:
+            if selected_format=="ZIP":
                 st.download_button(f"Download {selected_format}", selected_data, file_name=selected_name, width="stretch", key=f"download_{doc['id']}_{selected_format.lower()}")
-            with action_right:
-                if st.link_button("Send via Outlook",url="https://outlook.office.com/mail/",width="stretch",key=f"outlook_{doc['id']}_{selected_format.lower()}"):
-                    log_plugin(db,doc["id"],"outlook_web_open","success",{"format":selected_format})
-                    st.rerun()
+            else:
+                action_left,action_right=st.columns(2)
+                with action_left:
+                    st.download_button(f"Download {selected_format}", selected_data, file_name=selected_name, width="stretch", key=f"download_{doc['id']}_{selected_format.lower()}")
+                with action_right:
+                    if st.button("Send via Outlook", width="stretch", key=f"outlook_{doc['id']}_{selected_format.lower()}"):
+                        webbrowser.open("https://outlook.office.com/mail/")
+                        log_plugin(db,doc["id"],"outlook_web_open","success",{"format":selected_format})
+                        st.rerun()
 
 def _chat(settings,db):
     st.markdown("<div class='hero'><h1>Your document conversation</h1><p>Attach a document, analyze it, correct its data, export it, or simply ask a question.</p></div>",unsafe_allow_html=True)
